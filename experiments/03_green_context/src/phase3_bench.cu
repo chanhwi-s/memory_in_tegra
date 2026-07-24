@@ -1,0 +1,572 @@
+// Phase 3 — green context (SM partitioning) on the two-kernel roofline
+// (see prompts/03_green_context.md). Measures ONE cell per invocation
+// (test point x config x sm split); the outer sweep over test points /
+// partition ratios lives in scripts/sweep.py, which reads Phase 1/2
+// findings.json at run time (00_conventions.md: never fabricate numbers).
+//
+// Build: nvcc -O3 -arch=sm_87 -o phase3_bench phase3_bench.cu -lcuda
+//
+// Modes:
+//   (default)          measure one cell, print one CSV row (no header) to stdout
+//   --verify           create the requested SM split, run the %smid probe kernel
+//                       on each partition, report whether the observed SM id sets
+//                       are disjoint (evidence partitioning took effect)
+//   --check-api        print whether the green-context driver API is usable on
+//                       this device/driver and exit (no measurement)
+//
+// Green context requires the CUDA *driver* API (cuda.h), CUDA >= 12.4
+// (prompts/03_green_context.md). Code is guarded by CUDA_VERSION so it still
+// compiles against older toolkits (green config then reports unsupported
+// instead of faking a partition). Driver-API struct/enum names below follow
+// the documented CUDA 12.4 Green Context API from memory; VERIFY against the
+// installed <cuda.h> on the actual Jetson before trusting this on real
+// hardware — this file has not been compiled or run (no CUDA toolchain on
+// this dev machine), same caveat as experiments/01_single_kernel_size.
+#include <cuda_runtime.h>
+#include <cuda.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <set>
+
+#define CUDA_CHECK(call)                                                          \
+    do {                                                                          \
+        cudaError_t _err = (call);                                                \
+        if (_err != cudaSuccess) {                                                \
+            fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,          \
+                    cudaGetErrorString(_err));                                     \
+            exit(1);                                                              \
+        }                                                                          \
+    } while (0)
+
+#define CU_CHECK(call)                                                            \
+    do {                                                                          \
+        CUresult _res = (call);                                                   \
+        if (_res != CUDA_SUCCESS) {                                               \
+            const char* _name = nullptr;                                         \
+            cuGetErrorName(_res, &_name);                                         \
+            fprintf(stderr, "CUDA driver error %s:%d: %s\n", __FILE__, __LINE__,   \
+                    _name ? _name : "unknown");                                   \
+            exit(1);                                                              \
+        }                                                                          \
+    } while (0)
+
+#define PHASE3_MIN_CUDA_VERSION 12040  // CUDA 12.4: green context driver API
+
+#if defined(CUDA_VERSION) && CUDA_VERSION >= PHASE3_MIN_CUDA_VERSION
+#define GREEN_CTX_COMPILED 1
+#else
+#define GREEN_CTX_COMPILED 0
+#endif
+
+__global__ void addKernel(const float* __restrict__ A, const float* __restrict__ B,
+                           float* __restrict__ C, size_t n) {
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+        C[i] = A[i] + B[i];
+    }
+}
+
+__global__ void fillKernel(float* __restrict__ A, float* __restrict__ B, size_t n) {
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+        A[i] = 1.0f;
+        B[i] = 2.0f;
+    }
+}
+
+// Verification kernel: each thread records which SM it executed on
+// (00_conventions verification requirement / prompt "Verification" section).
+__global__ void smidProbeKernel(unsigned int* __restrict__ out) {
+    unsigned int smid;
+    asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+    out[(size_t)blockIdx.x * blockDim.x + threadIdx.x] = smid;
+}
+
+// ---- env / device info (same approach as Phase 1) ----
+
+static std::string trim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    size_t b = s.find_last_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    return s.substr(a, b - a + 1);
+}
+
+static std::string queryPowerMode() {
+    FILE* pipe = popen("nvpmodel -q 2>/dev/null", "r");
+    if (!pipe) return "unknown";
+    std::string result = "unknown";
+    char buf[256];
+    while (fgets(buf, sizeof(buf), pipe)) {
+        std::string line(buf);
+        auto pos = line.find("NV Power Mode");
+        if (pos != std::string::npos) {
+            auto colon = line.find(':', pos);
+            if (colon != std::string::npos) result = trim(line.substr(colon + 1));
+        }
+    }
+    pclose(pipe);
+    return result;
+}
+
+static double querySocTempC() {
+    static const char* candidates[] = {
+        "/sys/devices/virtual/thermal/thermal_zone0/temp",
+        "/sys/class/thermal/thermal_zone0/temp",
+    };
+    for (const char* path : candidates) {
+        FILE* f = fopen(path, "r");
+        if (!f) continue;
+        long milli = 0;
+        int got = fscanf(f, "%ld", &milli);
+        fclose(f);
+        if (got == 1) return milli / 1000.0;
+    }
+    return -1.0;
+}
+
+static std::string versionStr(int v) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d.%d", v / 1000, (v % 100) / 10);
+    return buf;
+}
+
+struct EnvInfo {
+    int gpu_clock_mhz;
+    std::string power_mode;
+    double soc_temp_c;
+    std::string cuda_version;
+    std::string driver_version;
+};
+
+static EnvInfo queryEnv() {
+    EnvInfo e;
+    int runtimeVer = 0, driverVer = 0, clockKhz = 0;
+    CUDA_CHECK(cudaRuntimeGetVersion(&runtimeVer));
+    CUDA_CHECK(cudaDriverGetVersion(&driverVer));
+    CUDA_CHECK(cudaDeviceGetAttribute(&clockKhz, cudaDevAttrClockRate, 0));
+    e.gpu_clock_mhz = clockKhz / 1000;
+    e.cuda_version = versionStr(runtimeVer);
+    e.driver_version = versionStr(driverVer);
+    e.power_mode = queryPowerMode();
+    e.soc_temp_c = querySocTempC();
+    return e;
+}
+
+// ---- stats ----
+
+struct Stats {
+    double median, min, max, stddev;
+};
+
+static Stats computeStats(std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    Stats s;
+    size_t n = v.size();
+    s.min = v.front();
+    s.max = v.back();
+    s.median = (n % 2 == 0) ? (v[n / 2 - 1] + v[n / 2]) / 2.0 : v[n / 2];
+    double mean = 0;
+    for (double x : v) mean += x;
+    mean /= n;
+    double var = 0;
+    for (double x : v) var += (x - mean) * (x - mean);
+    var /= n;
+    s.stddev = std::sqrt(var);
+    return s;
+}
+
+// ---- green context availability (00_conventions: verify before use, never fake) ----
+
+static bool greenContextApiAvailable(std::string& reason) {
+#if !GREEN_CTX_COMPILED
+    reason = "compiled against CUDA_VERSION < " + std::to_string(PHASE3_MIN_CUDA_VERSION) +
+              " (green context driver API not declared in this cuda.h)";
+    return false;
+#else
+    CUresult initRes = cuInit(0);
+    if (initRes != CUDA_SUCCESS) {
+        reason = "cuInit failed";
+        return false;
+    }
+    int driverVer = 0;
+    CU_CHECK(cuDriverGetVersion(&driverVer));
+    if (driverVer < PHASE3_MIN_CUDA_VERSION) {
+        reason = "driver reports CUDA " + versionStr(driverVer) + ", need >= 12.4";
+        return false;
+    }
+    reason = "driver CUDA " + versionStr(driverVer) + " >= 12.4, green context API present";
+    return true;
+#endif
+}
+
+#if GREEN_CTX_COMPILED
+// Partition the device's SMs into two disjoint groups of sm0Count / sm1Count
+// SMs and create a green context + stream for each. Caller launches kernels
+// on the returned streams (cast to cudaStream_t) using ordinary <<<>>> syntax
+// with the corresponding green context current on the launching thread.
+struct GreenPartition {
+    CUgreenCtx gctx;
+    CUcontext ctxView;   // cuCtxFromGreenCtx: lets runtime-API launches target this partition
+    CUstream stream;
+};
+
+static GreenPartition makeGreenPartition(CUdevice dev, CUdevResource* smPool, unsigned int smCount) {
+    GreenPartition p{};
+    CUdevResource result;
+    CUdevResource remaining;
+    unsigned int nbGroups = 1;
+    CU_CHECK(cuDevSmResourceSplitByCount(&result, &nbGroups, smPool, &remaining,
+                                          /*useFlags=*/0, smCount));
+    *smPool = remaining;  // caller passes the remainder into the next split
+
+    CUdevResourceDesc desc;
+    CU_CHECK(cuDevResourceGenerateDesc(&desc, &result, 1));
+    CU_CHECK(cuGreenCtxCreate(&p.gctx, desc, dev, CU_GREEN_CTX_DEFAULT_STREAM));
+    CU_CHECK(cuCtxFromGreenCtx(&p.ctxView, p.gctx));
+    CU_CHECK(cuGreenCtxStreamCreate(&p.stream, p.gctx, CU_STREAM_NON_BLOCKING, /*priority=*/0));
+    return p;
+}
+
+static void destroyGreenPartition(GreenPartition& p) {
+    cuStreamDestroy(p.stream);
+    cuGreenCtxDestroy(p.gctx);
+}
+#endif
+
+// ---- CLI ----
+
+struct Args {
+    std::string testPointId = "unspecified";
+    std::string mode = "symmetric";      // symmetric|asymmetric
+    std::string config = "shared";       // shared|green
+    size_t k0Bytes = 1ull * 1024 * 1024;
+    size_t k1Bytes = 1ull * 1024 * 1024;
+    int sm0 = 8;                          // SM count for K0 partition (green only)
+    int sm1 = 8;                          // SM count for K1 partition (green only)
+    int blocks0 = 256;
+    int blocks1 = 256;
+    int tpb = 256;
+    int trials = 10;
+    bool verify = false;
+    bool checkApiOnly = false;
+};
+
+static size_t parseBytes(const std::string& s) { return (size_t)std::strtoull(s.c_str(), nullptr, 10); }
+
+static Args parseArgs(int argc, char** argv) {
+    Args a;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        auto next = [&](void) -> std::string { return (i + 1 < argc) ? argv[++i] : ""; };
+        if (arg == "--test-point-id") a.testPointId = next();
+        else if (arg == "--mode") a.mode = next();
+        else if (arg == "--config") a.config = next();
+        else if (arg == "--k0-bytes") a.k0Bytes = parseBytes(next());
+        else if (arg == "--k1-bytes") a.k1Bytes = parseBytes(next());
+        else if (arg == "--sm0") a.sm0 = std::atoi(next().c_str());
+        else if (arg == "--sm1") a.sm1 = std::atoi(next().c_str());
+        else if (arg == "--blocks0") a.blocks0 = std::atoi(next().c_str());
+        else if (arg == "--blocks1") a.blocks1 = std::atoi(next().c_str());
+        else if (arg == "--tpb") a.tpb = std::atoi(next().c_str());
+        else if (arg == "--trials") a.trials = std::atoi(next().c_str());
+        else if (arg == "--verify") a.verify = true;
+        else if (arg == "--check-api") a.checkApiOnly = true;
+        else {
+            fprintf(stderr, "Unknown arg: %s\n", arg.c_str());
+            exit(2);
+        }
+    }
+    return a;
+}
+
+// ---- measurement: shared (no green context) ----
+// Both kernels launched on two ordinary streams, all 16 SMs, block scheduler
+// interleaves both (the Phase 2 baseline). Wall time = both streams complete.
+
+static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
+                                   float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
+                                   int tpb, int trials, double* k0MsOut, double* k1MsOut) {
+    cudaStream_t s0, s1;
+    CUDA_CHECK(cudaStreamCreate(&s0));
+    CUDA_CHECK(cudaStreamCreate(&s1));
+
+    for (int w = 0; w < 3; ++w) {
+        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    cudaEvent_t start, stop0, stop1;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop0));
+    CUDA_CHECK(cudaEventCreate(&stop1));
+
+    std::vector<double> wallMs, k0Ms, k1Ms;
+    for (int t = 0; t < trials; ++t) {
+        // barrier: both streams wait on the same start event so timing starts together
+        CUDA_CHECK(cudaEventRecord(start, s0));
+        CUDA_CHECK(cudaStreamWaitEvent(s1, start, 0));
+
+        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        CUDA_CHECK(cudaEventRecord(stop0, s0));
+        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        CUDA_CHECK(cudaEventRecord(stop1, s1));
+
+        CUDA_CHECK(cudaEventSynchronize(stop0));
+        CUDA_CHECK(cudaEventSynchronize(stop1));
+        float ms0 = 0, ms1 = 0;
+        CUDA_CHECK(cudaEventElapsedTime(&ms0, start, stop0));
+        CUDA_CHECK(cudaEventElapsedTime(&ms1, start, stop1));
+        k0Ms.push_back(ms0);
+        k1Ms.push_back(ms1);
+        wallMs.push_back(std::max(ms0, ms1));
+    }
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop0));
+    CUDA_CHECK(cudaEventDestroy(stop1));
+    CUDA_CHECK(cudaStreamDestroy(s0));
+    CUDA_CHECK(cudaStreamDestroy(s1));
+
+    *k0MsOut = computeStats(k0Ms).median;
+    *k1MsOut = computeStats(k1Ms).median;
+    return computeStats(wallMs).median;
+}
+
+#if GREEN_CTX_COMPILED
+// ---- measurement: green context (partitioned SMs) ----
+
+static double measureGreenWallMs(CUdevice dev, int sm0Count, int sm1Count,
+                                  float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
+                                  float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
+                                  int tpb, int trials, double* k0MsOut, double* k1MsOut) {
+    CUdevResource smPool;
+    CU_CHECK(cuDeviceGetDevResource(dev, &smPool, CU_DEV_RESOURCE_TYPE_SM));
+
+    GreenPartition p0 = makeGreenPartition(dev, &smPool, (unsigned int)sm0Count);
+    GreenPartition p1 = makeGreenPartition(dev, &smPool, (unsigned int)sm1Count);
+
+    cudaStream_t s0 = (cudaStream_t)p0.stream;
+    cudaStream_t s1 = (cudaStream_t)p1.stream;
+
+    for (int w = 0; w < 3; ++w) {
+        CU_CHECK(cuCtxPushCurrent(p0.ctxView));
+        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        CU_CHECK(cuCtxPopCurrent(nullptr));
+
+        CU_CHECK(cuCtxPushCurrent(p1.ctxView));
+        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        CU_CHECK(cuCtxPopCurrent(nullptr));
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    cudaEvent_t start, stop0, stop1;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop0));
+    CUDA_CHECK(cudaEventCreate(&stop1));
+
+    std::vector<double> wallMs, k0Ms, k1Ms;
+    for (int t = 0; t < trials; ++t) {
+        CUDA_CHECK(cudaEventRecord(start, s0));
+        CUDA_CHECK(cudaStreamWaitEvent(s1, start, 0));
+
+        CU_CHECK(cuCtxPushCurrent(p0.ctxView));
+        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        CUDA_CHECK(cudaEventRecord(stop0, s0));
+        CU_CHECK(cuCtxPopCurrent(nullptr));
+
+        CU_CHECK(cuCtxPushCurrent(p1.ctxView));
+        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        CUDA_CHECK(cudaEventRecord(stop1, s1));
+        CU_CHECK(cuCtxPopCurrent(nullptr));
+
+        CUDA_CHECK(cudaEventSynchronize(stop0));
+        CUDA_CHECK(cudaEventSynchronize(stop1));
+        float ms0 = 0, ms1 = 0;
+        CUDA_CHECK(cudaEventElapsedTime(&ms0, start, stop0));
+        CUDA_CHECK(cudaEventElapsedTime(&ms1, start, stop1));
+        k0Ms.push_back(ms0);
+        k1Ms.push_back(ms1);
+        wallMs.push_back(std::max(ms0, ms1));
+    }
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop0));
+    CUDA_CHECK(cudaEventDestroy(stop1));
+    destroyGreenPartition(p0);
+    destroyGreenPartition(p1);
+
+    *k0MsOut = computeStats(k0Ms).median;
+    *k1MsOut = computeStats(k1Ms).median;
+    return computeStats(wallMs).median;
+}
+
+// ---- verification: confirm each partition's blocks only ran on its assigned SMs ----
+
+static void runVerify(CUdevice dev, int sm0Count, int sm1Count, int blocks0, int blocks1, int tpb) {
+    CUdevResource smPool;
+    CU_CHECK(cuDeviceGetDevResource(dev, &smPool, CU_DEV_RESOURCE_TYPE_SM));
+    GreenPartition p0 = makeGreenPartition(dev, &smPool, (unsigned int)sm0Count);
+    GreenPartition p1 = makeGreenPartition(dev, &smPool, (unsigned int)sm1Count);
+
+    size_t n0Threads = (size_t)blocks0 * tpb;
+    size_t n1Threads = (size_t)blocks1 * tpb;
+    unsigned int *dOut0, *dOut1;
+    CUDA_CHECK(cudaMalloc(&dOut0, n0Threads * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&dOut1, n1Threads * sizeof(unsigned int)));
+
+    CU_CHECK(cuCtxPushCurrent(p0.ctxView));
+    smidProbeKernel<<<blocks0, tpb, 0, (cudaStream_t)p0.stream>>>(dOut0);
+    CU_CHECK(cuCtxPopCurrent(nullptr));
+
+    CU_CHECK(cuCtxPushCurrent(p1.ctxView));
+    smidProbeKernel<<<blocks1, tpb, 0, (cudaStream_t)p1.stream>>>(dOut1);
+    CU_CHECK(cuCtxPopCurrent(nullptr));
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    std::vector<unsigned int> h0(n0Threads), h1(n1Threads);
+    CUDA_CHECK(cudaMemcpy(h0.data(), dOut0, n0Threads * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h1.data(), dOut1, n1Threads * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+
+    std::set<unsigned int> smids0(h0.begin(), h0.end());
+    std::set<unsigned int> smids1(h1.begin(), h1.end());
+    std::vector<unsigned int> overlap;
+    std::set_intersection(smids0.begin(), smids0.end(), smids1.begin(), smids1.end(),
+                           std::back_inserter(overlap));
+
+    printf("partition0 (%d SMs requested) observed smids:", sm0Count);
+    for (auto id : smids0) printf(" %u", id);
+    printf("\npartition1 (%d SMs requested) observed smids:", sm1Count);
+    for (auto id : smids1) printf(" %u", id);
+    printf("\noverlap: %zu smid(s) %s\n", overlap.size(),
+           overlap.empty() ? "(disjoint -- partitioning confirmed)"
+                            : "(NOT disjoint -- partitioning did NOT take effect, investigate)");
+
+    cudaFree(dOut0);
+    cudaFree(dOut1);
+    destroyGreenPartition(p0);
+    destroyGreenPartition(p1);
+}
+#endif  // GREEN_CTX_COMPILED
+
+int main(int argc, char** argv) {
+    Args a = parseArgs(argc, argv);
+
+    if (a.checkApiOnly) {
+        std::string reason;
+        bool ok = greenContextApiAvailable(reason);
+        printf("green_context_available=%d reason=\"%s\"\n", ok ? 1 : 0, reason.c_str());
+        return ok ? 0 : 3;
+    }
+
+    if (a.config == "green") {
+        std::string reason;
+        if (!greenContextApiAvailable(reason)) {
+            fprintf(stderr, "ERROR: green context requested but unavailable: %s\n", reason.c_str());
+            fprintf(stderr, "STOP (00_conventions.md / prompt: do not fake partitioning). "
+                             "Report this in the worklog.\n");
+            return 3;
+        }
+        if (a.sm0 + a.sm1 > 16) {
+            fprintf(stderr, "ERROR: sm0(%d)+sm1(%d) > 16 SMs available on this device\n", a.sm0, a.sm1);
+            return 2;
+        }
+    }
+
+#if GREEN_CTX_COMPILED
+    CUdevice dev = 0;
+    if (a.config == "green" || a.verify) {
+        CU_CHECK(cuInit(0));
+        CU_CHECK(cuDeviceGet(&dev, 0));
+    }
+#endif
+
+    size_t n0 = a.k0Bytes / sizeof(float);
+    size_t n1 = a.k1Bytes / sizeof(float);
+
+    float *dA0, *dB0, *dC0, *dA1, *dB1, *dC1;
+    CUDA_CHECK(cudaMalloc(&dA0, n0 * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&dB0, n0 * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&dC0, n0 * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&dA1, n1 * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&dB1, n1 * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&dC1, n1 * sizeof(float)));
+    fillKernel<<<256, a.tpb>>>(dA0, dB0, n0);
+    fillKernel<<<256, a.tpb>>>(dA1, dB1, n1);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    if (a.verify) {
+#if GREEN_CTX_COMPILED
+        runVerify(dev, a.sm0, a.sm1, a.blocks0, a.blocks1, a.tpb);
+#else
+        fprintf(stderr, "ERROR: --verify requires green context support; not compiled in "
+                         "(CUDA_VERSION < %d)\n", PHASE3_MIN_CUDA_VERSION);
+        return 3;
+#endif
+        cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+        cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+        return 0;
+    }
+
+    EnvInfo env = queryEnv();
+
+    double k0Ms = 0, k1Ms = 0, wallMs = 0;
+    int smSplit0 = 0, smSplit1 = 0;
+    if (a.config == "shared") {
+        wallMs = measureSharedWallMs(dA0, dB0, dC0, n0, a.blocks0, dA1, dB1, dC1, n1, a.blocks1,
+                                      a.tpb, a.trials, &k0Ms, &k1Ms);
+        smSplit0 = 16;  // shared: both kernels see all 16 SMs
+        smSplit1 = 16;
+    } else {
+#if GREEN_CTX_COMPILED
+        wallMs = measureGreenWallMs(dev, a.sm0, a.sm1, dA0, dB0, dC0, n0, a.blocks0,
+                                     dA1, dB1, dC1, n1, a.blocks1, a.tpb, a.trials, &k0Ms, &k1Ms);
+        smSplit0 = a.sm0;
+        smSplit1 = a.sm1;
+#endif
+    }
+
+    // correctness check on both outputs after the measured run
+    {
+        size_t nsample0 = std::min<size_t>(n0, 4096);
+        size_t nsample1 = std::min<size_t>(n1, 4096);
+        std::vector<float> h0(nsample0), h1(nsample1);
+        CUDA_CHECK(cudaMemcpy(h0.data(), dC0, nsample0 * sizeof(float), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h1.data(), dC1, nsample1 * sizeof(float), cudaMemcpyDeviceToHost));
+        for (float v : h0) if (std::fabs(v - 3.0f) > 1e-5f) {
+            fprintf(stderr, "CORRECTNESS FAILURE in K0 (test_point=%s config=%s)\n",
+                    a.testPointId.c_str(), a.config.c_str());
+            return 1;
+        }
+        for (float v : h1) if (std::fabs(v - 3.0f) > 1e-5f) {
+            fprintf(stderr, "CORRECTNESS FAILURE in K1 (test_point=%s config=%s)\n",
+                    a.testPointId.c_str(), a.config.c_str());
+            return 1;
+        }
+    }
+
+    cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+    cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+
+    double k0Bytes = 3.0 * (double)n0 * 4.0;  // A read + B read + C write
+    double k1Bytes = 3.0 * (double)n1 * 4.0;
+    double k0GBps = k0Bytes / (k0Ms / 1000.0) / 1e9;
+    double k1GBps = k1Bytes / (k1Ms / 1000.0) / 1e9;
+    double aggGBps = (k0Bytes + k1Bytes) / (wallMs / 1000.0) / 1e9;
+
+    // delta_vs_shared_pct is filled in by scripts/sweep.py after collecting the
+    // matching shared-baseline row for this test_point_id (needs cross-row join).
+    printf("%s,%s,%zu,%zu,%s,%d,%d,%d,%d,%d,%d,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%s,%.1f,%s,%s\n",
+           a.testPointId.c_str(), a.mode.c_str(), a.k0Bytes, a.k1Bytes, a.config.c_str(),
+           smSplit0, smSplit1, a.blocks0, a.blocks1, a.tpb, a.trials, wallMs, aggGBps, k0GBps,
+           k1GBps, 0.0, env.gpu_clock_mhz, env.power_mode.c_str(), env.soc_temp_c,
+           env.cuda_version.c_str(), env.driver_version.c_str());
+
+    return 0;
+}
