@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, run the Phase 3 sweep, plot, derive findings, and log
+# Build (if needed), lock clocks, run the Phase 3 v2 sweep, plot, derive findings, and log
 # the environment -- a single end-to-end entry point (no separate plot.py /
 # derive_findings.py invocation needed). Intended to run on the Jetson AGX Orin device
 # itself. Runnable from anywhere. Needs pandas + matplotlib for the plot/findings steps.
+#
+# v2 (prompts/03_green_context_v2.md): the sweep is now a widened per-kernel size
+# sweep (~64 KB - 8 MB, symmetric + asymmetric) instead of 3 fixed points, and
+# EACH cell runs an in-context block-count saturation search inside phase3_bench
+# (not a single fixed-block measurement) -- this run takes noticeably longer than
+# the original Phase 3 run. See scripts/sweep.py --dry-run to preview cell count.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

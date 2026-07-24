@@ -1,23 +1,42 @@
 #!/usr/bin/env python3
-"""Phase 3 sweep driver: shared vs green-context, at Phase 2's roofline test
-points, across SM partition ratios. Runnable from anywhere.
+"""Phase 3 v2 sweep driver: shared vs green-context, across a WIDENED per-kernel
+size sweep (64 KB - 8 MB, symmetric and asymmetric) plus Phase 2's roofline
+anchors, across SM partition ratios. Runnable from anywhere.
+
+v2 changes vs the original sweep.py (prompts/03_green_context_v2.md):
+  - Change 1: block counts are no longer looked up from Phase 1 and held fixed.
+    This script now passes a per-size SEED (still the Phase 1 nearest-neighbor
+    lookup, `nearest_saturation_blocks`) via --blocks0-seed/--blocks1-seed;
+    `phase3_bench` itself runs an in-context local search from that seed and
+    prints the ACTUAL saturated blocks_k0/blocks_k1 + plateau_reached in its
+    CSV row. This script never decides the final block count anymore.
+  - Change 2: the test-point list is no longer capped to Phase 2's 3 roofline
+    points. It now includes a geometric per-kernel size sweep from ~64 KB to
+    ~8 MB (symmetric: both kernels grown together; asymmetric: K0 fixed at
+    1 MB, K1 swept) PLUS Phase 2's `recommended_phase3_test_points` re-added
+    as explicitly-labeled "anchor" cells (id prefix `*_anchor_`) at their exact
+    byte sizes, so they stay directly comparable to the original Phase 3 run.
 
 This script owns the outer sweep (which the C++ binary does not know about);
 `phase3_bench` measures exactly one cell per invocation and prints one CSV
 row to stdout. This script:
-  1. reads test-point sizes from experiments/02_two_kernel_size/findings.json
-     and saturation/tpb from experiments/01_single_kernel_size/findings.json,
-     at RUN TIME -- never hard-coded (00_conventions.md #2).
+  1. reads Phase 2's recommended_phase3_test_points (for anchor labeling only
+     -- the sweep itself does NOT depend on Phase 2) from
+     experiments/02_two_kernel_size/findings.json, and saturation-search seeds
+     + tpb from experiments/01_single_kernel_size/findings.json, at RUN TIME
+     -- never hard-coded (00_conventions.md #2).
   2. falls back to placeholder defaults with a loud TODO warning if either is
-     absent (per prompts/03_green_context.md "Dependency" section) --
-     it does NOT fabricate upstream numbers, it only supplies its own
-     placeholder test points so the harness is runnable standalone.
-  3. invokes the built binary once per (test_point, config, sm_split) cell.
+     absent -- it does NOT fabricate upstream numbers, it only supplies its
+     own placeholder seeds so the harness is runnable standalone. The size
+     sweep itself (Change 2) never needs a fallback: it is this phase's own,
+     not read from upstream.
+  3. invokes the built binary once per (test_point, config, sm_split) cell;
+     the binary itself saturates blocks_k0/blocks_k1 in context (Change 1).
   4. joins each green row back to its test point's shared baseline to fill
      delta_vs_shared_pct, and writes results/phase3_results.csv.
 
-Use --dry-run to print the planned cells without needing a built binary or
-a CUDA device (useful for reviewing the sweep plan off-device).
+Use --dry-run to print the planned cells (and the per-SM working-set context
+for each size) without needing a built binary or a CUDA device.
 """
 import argparse
 import json
@@ -34,29 +53,44 @@ CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
 PHASE1_FINDINGS = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size", "findings.json")
 PHASE2_FINDINGS = os.path.join(REPO_ROOT, "experiments", "02_two_kernel_size", "findings.json")
 
+# Column order MUST match phase3_bench.cu's final printf exactly.
 CSV_HEADER = (
     "test_point_id,mode,k0_bytes,k1_bytes,config,sm_split_k0,sm_split_k1,"
-    "blocks_k0,blocks_k1,threads_per_block,trials,wall_ms_median,agg_GBps_median,"
-    "k0_GBps_median,k1_GBps_median,delta_vs_shared_pct,gpu_clock_mhz,power_mode,"
-    "soc_temp_c,cuda_version,driver_version"
+    "blocks_k0,blocks_k1,threads_per_block,trials,plateau_reached,wall_ms_median,"
+    "agg_GBps_median,k0_GBps_median,k1_GBps_median,delta_vs_shared_pct,gpu_clock_mhz,"
+    "power_mode,soc_temp_c,cuda_version,driver_version"
 )
-
-# Fallback placeholders, only used if experiments/02_two_kernel_size/findings.json
-# is absent. TODO(read from phase2 findings): replace by reading the real
-# recommended_phase3_test_points once Phase 2 has been run.
-DEFAULT_TEST_POINTS = [
-    {"mode": "symmetric", "test_point_id": "sym_onset", "k0_bytes": 4 * 1024 * 1024, "k1_bytes": 4 * 1024 * 1024},
-    {"mode": "symmetric", "test_point_id": "sym_ninety_pct", "k0_bytes": int(3.6 * 1024 * 1024), "k1_bytes": int(3.6 * 1024 * 1024)},
-    {"mode": "asymmetric", "test_point_id": "asym_at_k", "k0_bytes": 1 * 1024 * 1024, "k1_bytes": 8 * 1024 * 1024},
-]
 
 # TODO(read from phase1 findings): replaced by saturation_blocks_by_size /
 # recommended_threads_per_block once Phase 1 has been run.
 DEFAULT_TPB = 256
-DEFAULT_BLOCKS = 256
+DEFAULT_BLOCKS_SEED = 64
 
 SYMMETRIC_SPLITS = [(4, 12), (6, 10), (8, 8), (10, 6), (12, 4)]
 NUM_SMS = 16
+L1_BYTES_PER_SM = 192 * 1024
+
+# ---- Change 2: Phase 3's OWN widened per-kernel size sweep ----
+# ~1.5-2x geometric grid from ~64 KB (per-SM working set approaches the 192 KB/SM
+# L1 once partitioned) up to ~8 MB (clearly DRAM-bound), per
+# prompts/03_green_context_v2.md "Change 2". Not capped to Phase 2's 3 points.
+SWEEP_SIZE_LO_BYTES = 64 * 1024
+SWEEP_SIZE_HI_BYTES = 8 * 1024 * 1024
+SWEEP_SIZE_RATIO = 1.8
+ASYMMETRIC_K0_FIXED_BYTES = 1 * 1024 * 1024
+
+
+def geometric_size_sweep(lo, hi, ratio):
+    sizes = []
+    s = float(lo)
+    while s < hi * (1 - 1e-9):
+        sizes.append(int(round(s)))
+        s *= ratio
+    sizes.append(int(hi))
+    return sizes
+
+
+SWEEP_SIZES = geometric_size_sweep(SWEEP_SIZE_LO_BYTES, SWEEP_SIZE_HI_BYTES, SWEEP_SIZE_RATIO)
 
 
 def load_json(path):
@@ -68,7 +102,7 @@ def load_json(path):
 
 def nearest_saturation_blocks(sat_blocks_by_size, size_bytes):
     if not sat_blocks_by_size:
-        return DEFAULT_BLOCKS
+        return DEFAULT_BLOCKS_SEED
     keys = sorted(int(k) for k in sat_blocks_by_size.keys())
     nearest = min(keys, key=lambda k: abs(k - size_bytes))
     return int(sat_blocks_by_size[str(nearest)])
@@ -85,16 +119,39 @@ def asymmetric_splits(k0_bytes, k1_bytes):
     return [(c, NUM_SMS - c) for c in candidates]
 
 
-def build_plan(phase1, phase2):
+def per_sm_working_set_bytes(per_kernel_bytes, sm_count):
+    """~2*S/sm_k (OVERVIEW.md: read footprint = 2*S; Change 2's per-SM working
+    set context). Used only for --dry-run annotation / README-style reporting,
+    not for the actual green-split sweep."""
+    return 2.0 * per_kernel_bytes / max(sm_count, 1)
+
+
+def build_test_points(phase2):
+    """Change 2: Phase 3's own size sweep, independent of Phase 2, plus Phase 2's
+    recommended_phase3_test_points re-added as explicitly labeled anchor points
+    at their EXACT byte sizes (not snapped to the nearest sweep-grid point) so
+    they stay directly comparable to the original Phase 3 run."""
     warnings = []
+    points = []
+
+    for s in SWEEP_SIZES:
+        points.append({
+            "mode": "symmetric", "test_point_id": f"sym_{s}",
+            "k0_bytes": s, "k1_bytes": s, "is_anchor": False,
+        })
+    for s in SWEEP_SIZES:
+        points.append({
+            "mode": "asymmetric", "test_point_id": f"asym_{s}",
+            "k0_bytes": ASYMMETRIC_K0_FIXED_BYTES, "k1_bytes": s, "is_anchor": False,
+        })
 
     if phase2 is None:
         warnings.append(
             "TODO(read from phase2 findings): experiments/02_two_kernel_size/findings.json "
-            "not found -- using placeholder test points (DEFAULT_TEST_POINTS in sweep.py). "
-            "Do not trust these results as final; re-run once Phase 2 exists."
+            "not found -- the widened size sweep (Change 2) runs regardless, but no "
+            "Phase 2 roofline anchors are labeled in this run. Re-run once Phase 2 exists "
+            "so results stay comparable to the original Phase 3 run."
         )
-        test_points = DEFAULT_TEST_POINTS
     else:
         results = phase2.get("results", {})
         recommended = results.get("recommended_phase3_test_points")
@@ -102,23 +159,35 @@ def build_plan(phase1, phase2):
             sys.exit("FATAL: experiments/02_two_kernel_size/findings.json is present but missing "
                      "required key results.recommended_phase3_test_points (00_conventions.md #2: "
                      "fail loudly, do not substitute a guess).")
-        test_points = []
         for i, tp in enumerate(recommended):
             mode = tp["mode"]
             if mode == "symmetric":
-                k0 = k1 = int(tp["per_kernel_bytes"])
-                tp_id = tp.get("test_point_id", f"sym_{i}")
+                sz = int(tp["per_kernel_bytes"])
+                points.append({
+                    "mode": "symmetric", "test_point_id": f"sym_anchor_{i}_{sz}",
+                    "k0_bytes": sz, "k1_bytes": sz, "is_anchor": True,
+                })
             else:
-                k0 = int(tp.get("k0_bytes", 1 * 1024 * 1024))
+                k0 = int(tp.get("k0_bytes", ASYMMETRIC_K0_FIXED_BYTES))
                 k1 = int(tp["k1_bytes"])
-                tp_id = tp.get("test_point_id", f"asym_{i}")
-            test_points.append({"mode": mode, "test_point_id": tp_id, "k0_bytes": k0, "k1_bytes": k1})
+                points.append({
+                    "mode": "asymmetric", "test_point_id": f"asym_anchor_{i}_{k1}",
+                    "k0_bytes": k0, "k1_bytes": k1, "is_anchor": True,
+                })
+
+    return points, warnings
+
+
+def build_plan(phase1, phase2):
+    test_points, warnings = build_test_points(phase2)
 
     if phase1 is None:
         warnings.append(
             "TODO(read from phase1 findings): experiments/01_single_kernel_size/findings.json "
-            "not found -- using placeholder tpb=256 / blocks=256 (DEFAULT_TPB/DEFAULT_BLOCKS in "
-            "sweep.py). Do not trust these results as final; re-run once Phase 1 exists."
+            "not found -- using placeholder tpb=256 / block-search seed=64 (DEFAULT_TPB / "
+            "DEFAULT_BLOCKS_SEED in sweep.py). These are only SEEDS for phase3_bench's in-context "
+            "saturation search (Change 1), so the measured plateau is unaffected in principle, but "
+            "re-run once Phase 1 exists so the search starts from a real lower bound."
         )
         tpb = DEFAULT_TPB
         sat_blocks = {}
@@ -129,23 +198,23 @@ def build_plan(phase1, phase2):
 
     cells = []
     for tp in test_points:
-        blocks0 = nearest_saturation_blocks(sat_blocks, tp["k0_bytes"])
-        blocks1 = nearest_saturation_blocks(sat_blocks, tp["k1_bytes"])
+        seed0 = nearest_saturation_blocks(sat_blocks, tp["k0_bytes"])
+        seed1 = nearest_saturation_blocks(sat_blocks, tp["k1_bytes"])
 
         cells.append({
-            "test_point_id": tp["test_point_id"], "mode": tp["mode"],
+            "test_point_id": tp["test_point_id"], "mode": tp["mode"], "is_anchor": tp["is_anchor"],
             "k0_bytes": tp["k0_bytes"], "k1_bytes": tp["k1_bytes"],
             "config": "shared", "sm0": NUM_SMS, "sm1": NUM_SMS,
-            "blocks0": blocks0, "blocks1": blocks1, "tpb": tpb,
+            "blocks0_seed": seed0, "blocks1_seed": seed1, "tpb": tpb,
         })
 
         splits = SYMMETRIC_SPLITS if tp["mode"] == "symmetric" else asymmetric_splits(tp["k0_bytes"], tp["k1_bytes"])
         for sm0, sm1 in splits:
             cells.append({
-                "test_point_id": tp["test_point_id"], "mode": tp["mode"],
+                "test_point_id": tp["test_point_id"], "mode": tp["mode"], "is_anchor": tp["is_anchor"],
                 "k0_bytes": tp["k0_bytes"], "k1_bytes": tp["k1_bytes"],
                 "config": "green", "sm0": sm0, "sm1": sm1,
-                "blocks0": blocks0, "blocks1": blocks1, "tpb": tpb,
+                "blocks0_seed": seed0, "blocks1_seed": seed1, "tpb": tpb,
             })
 
     return cells, warnings
@@ -161,27 +230,31 @@ def run_cell(cell, trials):
         "--k1-bytes", str(cell["k1_bytes"]),
         "--sm0", str(cell["sm0"]),
         "--sm1", str(cell["sm1"]),
-        "--blocks0", str(cell["blocks0"]),
-        "--blocks1", str(cell["blocks1"]),
+        "--blocks0-seed", str(cell["blocks0_seed"]),
+        "--blocks1-seed", str(cell["blocks1_seed"]),
         "--tpb", str(cell["tpb"]),
         "--trials", str(trials),
     ]
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode == 4:
-        # phase3_bench: this SM ratio was invalid or rejected by the driver.
-        # Skip the cell with a warning instead of hard-failing the sweep.
+        # phase3_bench: this SM ratio was invalid, or was rejected by the driver
+        # (possibly discovered mid in-context block search). Skip the cell with
+        # a warning instead of hard-failing the sweep.
         print(f"WARNING: skipping cell (SM ratio {cell['sm0']}:{cell['sm1']} rejected): "
               f"{proc.stderr.strip()}", file=sys.stderr)
         return None
     if proc.returncode != 0:
         sys.exit(f"phase3_bench failed for cell {cell}: rc={proc.returncode}\n{proc.stderr}")
+    if proc.stderr.strip():
+        # e.g. "block search did not plateau" warnings -- surface them, not fatal.
+        print(proc.stderr.strip(), file=sys.stderr)
     line = proc.stdout.strip().splitlines()[-1]
     return line
 
 
 def fill_deltas(rows):
     """rows: list of CSV field-lists (matches CSV_HEADER order). Fills the
-    delta_vs_shared_pct column (index 15) by joining each row's test_point_id
+    delta_vs_shared_pct column by joining each row's test_point_id
     to that test point's shared-config row."""
     idx = {name: i for i, name in enumerate(CSV_HEADER.split(","))}
     shared_agg = {}
@@ -216,9 +289,15 @@ def main():
         print(f"WARNING: {w}", file=sys.stderr)
 
     if args.dry_run:
-        print(f"Planned {len(cells)} cells:")
+        n_anchor = sum(1 for c in cells if c["is_anchor"])
+        print(f"Planned {len(cells)} cells ({n_anchor} at Phase 2 anchor sizes, "
+              f"{len(SWEEP_SIZES)} sizes/mode in the widened sweep, "
+              f"per-kernel size range {SWEEP_SIZE_LO_BYTES}-{SWEEP_SIZE_HI_BYTES} bytes, "
+              f"ratio {SWEEP_SIZE_RATIO}x):")
         for c in cells:
-            print(f"  {c}")
+            ws0 = per_sm_working_set_bytes(c["k0_bytes"], c["sm0"])
+            near_l1 = " <=L1/SM" if ws0 <= L1_BYTES_PER_SM else ""
+            print(f"  {c}  per_sm_working_set_k0={ws0:.0f}B{near_l1}")
         return
 
     if not os.path.exists(BIN_PATH):
@@ -243,10 +322,16 @@ def main():
         for r in final_rows:
             f.write(",".join(r) + "\n")
 
+    idx = {name: i for i, name in enumerate(CSV_HEADER.split(","))}
+    n_not_plateaued = sum(1 for r in final_rows if r[idx["plateau_reached"]] == "0")
+
     print(f"wrote {CSV_PATH}")
     if skipped:
         print(f"NOTE: {skipped} cell(s) skipped (invalid/rejected SM ratios -- see WARNINGs above)",
               file=sys.stderr)
+    if n_not_plateaued:
+        print(f"NOTE: {n_not_plateaued} cell(s) did not reach a block-count plateau within the cap "
+              f"-- see WARNINGs above; treat those rows' throughput as a lower bound.", file=sys.stderr)
     if warnings:
         print("Reminder: this run used placeholder upstream values (see WARNINGs above) -- "
               "re-run once the missing findings.json exists.", file=sys.stderr)

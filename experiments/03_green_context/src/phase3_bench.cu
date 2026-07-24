@@ -1,18 +1,39 @@
-// Phase 3 — green context (SM partitioning) on the two-kernel roofline
-// (see prompts/03_green_context.md). Measures ONE cell per invocation
+// Phase 3 v2 — green context (SM partitioning) on the two-kernel roofline,
+// with IN-CONTEXT block-count saturation search and a widened size sweep
+// (see prompts/03_green_context_v2.md). Measures ONE cell per invocation
 // (test point x config x sm split); the outer sweep over test points /
-// partition ratios lives in scripts/sweep.py, which reads Phase 1/2
+// partition ratios / sizes lives in scripts/sweep.py, which reads Phase 1/2
 // findings.json at run time (00_conventions.md: never fabricate numbers).
 //
 // Build: nvcc -O3 -arch=sm_87 -o phase3_bench phase3_bench.cu -lcuda
 //
 // Modes:
-//   (default)          measure one cell, print one CSV row (no header) to stdout
+//   (default)          saturate blocks_k0/blocks_k1 in context for this cell
+//                       (see "in-context block saturation search" below), then
+//                       measure and print one CSV row (no header) to stdout
 //   --verify           create the requested SM split, run the %smid probe kernel
 //                       on each partition, report whether the observed SM id sets
 //                       are disjoint (evidence partitioning took effect)
 //   --check-api        print whether the green-context driver API is usable on
 //                       this device/driver and exit (no measurement)
+//
+// In-context block saturation search (v2 Change 1 — prompts/03_green_context_v2.md):
+// Phase 1's saturation_blocks_by_size (nearest-neighbor by size, single-kernel,
+// 16-SM) is NEVER used as the final block count. It is only a SEED / lower bound
+// for a local search run independently for THIS cell's config and SM split:
+//   - lower_bound = max(seed_from_phase1, kBlocksPerSmMin * assigned_sm_count)
+//     so the search range scales with how many SMs this partition actually has
+//     (a green 8-SM partition and the 16-SM shared config get different bounds).
+//   - candidates = {1,2,4,8} x lower_bound, each clamped to kBlocksCap (1024).
+//   - phase2_bench-style local search: sweep K0's candidates with K1 held at its
+//     own lower bound, pick the best (lowest wall time == highest agg GB/s);
+//     then sweep K1's candidates with K0 held at the chosen best; pick the best.
+//   - plateau_reached = true iff, on EACH axis, the top candidate's agg-GB/s gain
+//     over the previous candidate was < kPlateauGainFrac (~2%) -- i.e. the search
+//     actually flattened rather than still climbing at the kBlocksCap ceiling.
+// The chosen blocks_k0/blocks_k1 and plateau_reached are the ones printed in the
+// CSV row (00_conventions.md #4: block count is a knob, its saturated value is
+// what gets reported).
 //
 // Green context requires the CUDA *driver* API (cuda.h), CUDA >= 12.4
 // (prompts/03_green_context.md). Code is guarded by CUDA_VERSION so it still
@@ -35,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 #include <set>
@@ -186,6 +208,62 @@ static Stats computeStats(std::vector<double> v) {
     return s;
 }
 
+// ---- in-context block saturation search (v2 Change 1) ----
+
+// Minimum blocks/SM used to build the search's lower bound (matches Phase 1's
+// own ~4 blocks/SM at its saturation point, e.g. 64 blocks / 16 SMs); the actual
+// plateau is still found by the search below, this only seeds where it starts.
+static const int kBlocksPerSmMin = 4;
+static const int kSearchMultipliers[] = {1, 2, 4, 8};
+static const int kBlocksCap = 1024;
+static const double kPlateauGainFrac = 0.02;  // <2% gain over previous candidate = plateaued
+static const int kSearchTrials = 3;           // cheap timing during the search; final cell uses a.trials
+
+static int clampBlocksCount(long long b) { return (int)std::min<long long>(b, kBlocksCap); }
+
+// Geometric candidate ladder for one axis, seeded by the Phase 1 nearest-size
+// lookup but floored by kBlocksPerSmMin * assignedSmCount so a smaller SM
+// partition still gets a search range scaled to ITS SM count, not the
+// single-kernel/16-SM value (prompts/03_green_context_v2.md Change 1).
+static std::vector<int> buildBlockCandidates(int seedBlocks, int assignedSmCount) {
+    long long lowerBound = std::max<long long>((long long)seedBlocks,
+                                                 (long long)kBlocksPerSmMin * assignedSmCount);
+    std::vector<int> cands;
+    for (int m : kSearchMultipliers) {
+        int c = clampBlocksCount(lowerBound * m);
+        if (cands.empty() || cands.back() != c) cands.push_back(c);
+    }
+    return cands;
+}
+
+struct SearchAxisResult {
+    int chosenBlocks;
+    bool plateauReached;
+};
+
+// Sweep `candidates` for one axis via `aggGBpsForCandidate`, picking the one with
+// highest aggregate GB/s. plateauReached reflects whether the top candidate's
+// gain over the previous one is below kPlateauGainFrac (see file header comment).
+static SearchAxisResult sweepBlockAxis(const std::function<double(int)>& aggGBpsForCandidate,
+                                        const std::vector<int>& candidates) {
+    SearchAxisResult r{candidates.front(), true};
+    double bestAgg = -1.0;
+    std::vector<double> aggs;
+    aggs.reserve(candidates.size());
+    for (int c : candidates) {
+        double agg = aggGBpsForCandidate(c);
+        aggs.push_back(agg);
+        if (agg > bestAgg) { bestAgg = agg; r.chosenBlocks = c; }
+    }
+    if (aggs.size() >= 2) {
+        double prev = aggs[aggs.size() - 2];
+        double last = aggs.back();
+        double gain = (prev > 0) ? (last - prev) / prev : 0.0;
+        r.plateauReached = gain < kPlateauGainFrac;
+    }
+    return r;
+}
+
 // ---- green context availability (00_conventions: verify before use, never fake) ----
 
 static bool greenContextApiAvailable(std::string& reason) {
@@ -306,8 +384,10 @@ struct Args {
     size_t k1Bytes = 1ull * 1024 * 1024;
     int sm0 = 8;                          // SM count for K0 partition (green only)
     int sm1 = 8;                          // SM count for K1 partition (green only)
-    int blocks0 = 256;
-    int blocks1 = 256;
+    int blocks0 = 256;                    // --verify only: probe kernel block count, used as-is
+    int blocks1 = 256;                    // --verify only: probe kernel block count, used as-is
+    int blocks0Seed = 64;                 // measurement mode: seed/lower bound for the in-context search
+    int blocks1Seed = 64;                 // measurement mode: seed/lower bound for the in-context search
     int tpb = 256;
     int trials = 10;
     bool verify = false;
@@ -330,6 +410,8 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--sm1") a.sm1 = std::atoi(next().c_str());
         else if (arg == "--blocks0") a.blocks0 = std::atoi(next().c_str());
         else if (arg == "--blocks1") a.blocks1 = std::atoi(next().c_str());
+        else if (arg == "--blocks0-seed") a.blocks0Seed = std::atoi(next().c_str());
+        else if (arg == "--blocks1-seed") a.blocks1Seed = std::atoi(next().c_str());
         else if (arg == "--tpb") a.tpb = std::atoi(next().c_str());
         else if (arg == "--trials") a.trials = std::atoi(next().c_str());
         else if (arg == "--verify") a.verify = true;
@@ -600,17 +682,83 @@ int main(int argc, char** argv) {
 
     EnvInfo env = queryEnv();
 
+    // ---- in-context block saturation search (v2 Change 1) ----
+    // assigned SM count per axis: 16/16 for shared (both kernels see all SMs),
+    // a.sm0/a.sm1 for green (each kernel confined to its own partition).
+    int assignedSm0 = (a.config == "shared") ? 16 : a.sm0;
+    int assignedSm1 = (a.config == "shared") ? 16 : a.sm1;
+    double totalBytesForSearch = 3.0 * (double)n0 * 4.0 + 3.0 * (double)n1 * 4.0;  // A+B+C both kernels
+
+    bool ratioRejected = false;
+    // aggGBpsForPair: single point of contact with the device for the search --
+    // routes to the shared or green measurement path, kSearchTrials only (cheap).
+    // Sets ratioRejected and returns -1 if the green split was rejected by the
+    // driver (mirrors the pre-v2 behavior: skip this cell with a warning).
+    auto aggGBpsForPair = [&](int b0, int b1) -> double {
+        double wMs = 0, m0 = 0, m1 = 0;
+        bool ok;
+        if (a.config == "shared") {
+            wMs = measureSharedWallMs(dA0, dB0, dC0, n0, b0, dA1, dB1, dC1, n1, b1,
+                                       a.tpb, kSearchTrials, &m0, &m1);
+            ok = true;
+        } else {
+#if GREEN_CTX_COMPILED
+            ok = measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, b0, dA1, dB1, dC1, n1, b1,
+                                     a.tpb, kSearchTrials, &wMs, &m0, &m1);
+#else
+            ok = false;
+#endif
+        }
+        if (!ok) { ratioRejected = true; return -1.0; }
+        return totalBytesForSearch / (wMs / 1000.0) / 1e9;
+    };
+
+    std::vector<int> cand0 = buildBlockCandidates(a.blocks0Seed, assignedSm0);
+    std::vector<int> cand1 = buildBlockCandidates(a.blocks1Seed, assignedSm1);
+
+    // pass 1: sweep K0 candidates with K1 held at its own lower bound
+    SearchAxisResult r0 = sweepBlockAxis(
+        [&](int c) { return aggGBpsForPair(c, cand1.front()); }, cand0);
+    if (ratioRejected) {
+        fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
+                a.sm0, a.sm1);
+        cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+        cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+        return 4;
+    }
+    int bestBlocks0 = r0.chosenBlocks;
+
+    // pass 2: sweep K1 candidates with K0 held at the pass-1 winner
+    SearchAxisResult r1 = sweepBlockAxis(
+        [&](int c) { return aggGBpsForPair(bestBlocks0, c); }, cand1);
+    if (ratioRejected) {
+        fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
+                a.sm0, a.sm1);
+        cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+        cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+        return 4;
+    }
+    int bestBlocks1 = r1.chosenBlocks;
+    bool plateauReached = r0.plateauReached && r1.plateauReached;
+    if (!plateauReached) {
+        fprintf(stderr, "WARNING: block search did not plateau within cap=%d for test_point=%s "
+                         "config=%s sm=%d:%d (blocks_k0=%d plateau0=%d, blocks_k1=%d plateau1=%d)\n",
+                kBlocksCap, a.testPointId.c_str(), a.config.c_str(), a.sm0, a.sm1,
+                bestBlocks0, r0.plateauReached, bestBlocks1, r1.plateauReached);
+    }
+
+    // ---- final measured cell at the chosen (bestBlocks0, bestBlocks1), full trial count ----
     double k0Ms = 0, k1Ms = 0, wallMs = 0;
     int smSplit0 = 0, smSplit1 = 0;
     if (a.config == "shared") {
-        wallMs = measureSharedWallMs(dA0, dB0, dC0, n0, a.blocks0, dA1, dB1, dC1, n1, a.blocks1,
+        wallMs = measureSharedWallMs(dA0, dB0, dC0, n0, bestBlocks0, dA1, dB1, dC1, n1, bestBlocks1,
                                       a.tpb, a.trials, &k0Ms, &k1Ms);
         smSplit0 = 16;  // shared: both kernels see all 16 SMs
         smSplit1 = 16;
     } else {
 #if GREEN_CTX_COMPILED
-        if (!measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, a.blocks0,
-                                 dA1, dB1, dC1, n1, a.blocks1, a.tpb, a.trials,
+        if (!measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, bestBlocks0,
+                                 dA1, dB1, dC1, n1, bestBlocks1, a.tpb, a.trials,
                                  &wallMs, &k0Ms, &k1Ms)) {
             cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
             cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
@@ -651,11 +799,11 @@ int main(int argc, char** argv) {
 
     // delta_vs_shared_pct is filled in by scripts/sweep.py after collecting the
     // matching shared-baseline row for this test_point_id (needs cross-row join).
-    printf("%s,%s,%zu,%zu,%s,%d,%d,%d,%d,%d,%d,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%s,%.1f,%s,%s\n",
+    printf("%s,%s,%zu,%zu,%s,%d,%d,%d,%d,%d,%d,%d,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%s,%.1f,%s,%s\n",
            a.testPointId.c_str(), a.mode.c_str(), a.k0Bytes, a.k1Bytes, a.config.c_str(),
-           smSplit0, smSplit1, a.blocks0, a.blocks1, a.tpb, a.trials, wallMs, aggGBps, k0GBps,
-           k1GBps, 0.0, env.gpu_clock_mhz, env.power_mode.c_str(), env.soc_temp_c,
-           env.cuda_version.c_str(), env.driver_version.c_str());
+           smSplit0, smSplit1, bestBlocks0, bestBlocks1, a.tpb, a.trials, plateauReached ? 1 : 0,
+           wallMs, aggGBps, k0GBps, k1GBps, 0.0, env.gpu_clock_mhz, env.power_mode.c_str(),
+           env.soc_temp_c, env.cuda_version.c_str(), env.driver_version.c_str());
 
     return 0;
 }
