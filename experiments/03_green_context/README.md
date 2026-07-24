@@ -73,16 +73,12 @@ an unpartitioned run).
 
 ## Status
 
-**Not yet compiled or run.** This environment (Windows dev machine) has no CUDA toolkit or
-Jetson device, so `src/phase3_bench.cu` could not be built or executed here — only written
-against the documented CUDA 12.4 Green Context driver API from memory and reviewed against the
-prompt spec (same situation as Phase 1 — see `../01_single_kernel_size/README.md`). Before
-trusting this on real hardware:
-- **Verify the green-context driver API call signatures** (`cuDeviceGetDevResource`,
-  `cuDevSmResourceSplitByCount`, `cuDevResourceGenerateDesc`, `cuGreenCtxCreate`,
-  `cuCtxFromGreenCtx`, `cuGreenCtxStreamCreate`) against the installed `<cuda.h>` — struct/enum
-  names may differ slightly by CUDA minor version; this file has never been compiled.
-- Run `scripts/build.sh` and fix any compile errors against the real `cuda.h` first.
+**Compiles and runs on-device; measured results not yet committed.** The first on-device run
+surfaced `CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION` when the two partitions were created via
+two separate `cuDevSmResourceSplitByCount` calls; the code now uses the single-split-call
+approach (see Design notes) which is the layout the Tegra driver accepts. Development itself
+happens on a Windows machine with no CUDA toolchain, so changes made here are not
+compile-checked until built on the Jetson. Before trusting a run on real hardware:
 - Run `phase3_bench --check-api` and confirm it reports the API as available before trusting
   any `green`-config row.
 - Run `phase3_bench --verify` (or `scripts/run.sh`, which does this automatically) and confirm
@@ -107,6 +103,13 @@ trusting this on real hardware:
 - **SM split notation:** `sm_split_k0:sm_split_k1` always sums to 16 (the device's total SM
   count) for `green` rows; `shared` rows record `16:16` (both kernels see all SMs) as a
   self-describing sentinel, not a real disjoint split.
+- **Both partitions come from a single `cuDevSmResourceSplitByCount` call** — `result[0]` gets
+  `sm0` SMs (the split's `minCount`) and the `remaining` output gets the rest. Building the two
+  green contexts from two separate split calls fails on-device with
+  `CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION` (even for 8:8), which is why the ratio is swept by
+  varying `minCount` only. Tegra additionally requires `minCount` to be a multiple of 2; an
+  invalid or driver-rejected ratio makes `phase3_bench` exit with code 4, which `sweep.py` treats
+  as "skip this cell with a warning" rather than aborting the sweep.
 - **Green context creation is per-cell**, not cached across trials within a cell — partitions are
   created once before the warm-up loop and destroyed after the timed trials for that cell, so
   context-creation overhead is excluded from the measured window.
@@ -114,6 +117,6 @@ trusting this on real hardware:
   written by `addKernel`, not by the buffer-fill step) on both kernels' outputs, same tolerance
   as Phase 1.
 - **Asymmetric partition ratios** in `sweep.py` are chosen proportional to the two kernels' byte
-  sizes (`round(16 * k0_bytes / (k0_bytes + k1_bytes))`, clamped to `[2, 14]`, plus +/-2 SM
-  neighbors) rather than the fixed symmetric sweep, per the prompt's "sweep ratios around the
-  size ratio of the two kernels" instruction.
+  sizes (rounded to the nearest even SM count per the Tegra multiple-of-2 rule, clamped to
+  `[2, 14]`, plus +/-2 SM neighbors) rather than the fixed symmetric sweep, per the prompt's
+  "sweep ratios around the size ratio of the two kernels" instruction.

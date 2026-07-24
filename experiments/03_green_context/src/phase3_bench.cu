@@ -17,11 +17,17 @@
 // Green context requires the CUDA *driver* API (cuda.h), CUDA >= 12.4
 // (prompts/03_green_context.md). Code is guarded by CUDA_VERSION so it still
 // compiles against older toolkits (green config then reports unsupported
-// instead of faking a partition). Driver-API struct/enum names below follow
-// the documented CUDA 12.4 Green Context API from memory; VERIFY against the
-// installed <cuda.h> on the actual Jetson before trusting this on real
-// hardware — this file has not been compiled or run (no CUDA toolchain on
-// this dev machine), same caveat as experiments/01_single_kernel_size.
+// instead of faking a partition).
+//
+// IMPORTANT (found on-device): both partitions of a two-way SM split MUST come
+// from the SAME cuDevSmResourceSplitByCount call (result[0] + its `remaining`
+// output). Creating them from two separate split calls fails with
+// CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION even for a symmetric 8:8 ratio.
+//
+// Exit codes: 0 success; 1 fatal CUDA/correctness failure; 2 bad CLI usage;
+// 3 green context API unavailable (see --check-api); 4 this SM ratio was
+// invalid or rejected by the driver -- skip this cell, not fatal to the sweep
+// (scripts/sweep.py catches 4, warns, and continues with the next cell).
 #include <cuda_runtime.h>
 #include <cuda.h>
 #include <algorithm>
@@ -205,31 +211,83 @@ static bool greenContextApiAvailable(std::string& reason) {
 }
 
 #if GREEN_CTX_COMPILED
-// Partition the device's SMs into two disjoint groups of sm0Count / sm1Count
-// SMs and create a green context + stream for each. Caller launches kernels
-// on the returned streams (cast to cudaStream_t) using ordinary <<<>>> syntax
-// with the corresponding green context current on the launching thread.
+// Total SM count on this device (OVERVIEW.md: 16 SMs on the Orin AGX iGPU).
+static const unsigned int kNumSMs = 16;
+
+// Caller launches kernels on the returned streams (cast to cudaStream_t) using
+// ordinary <<<>>> syntax with the corresponding green context current on the
+// launching thread (cuCtxPushCurrent(ctxView) before, cuCtxPopCurrent after).
 struct GreenPartition {
     CUgreenCtx gctx;
     CUcontext ctxView;   // cuCtxFromGreenCtx: lets runtime-API launches target this partition
     CUstream stream;
 };
 
-static GreenPartition makeGreenPartition(CUdevice dev, CUdevResource* smPool, unsigned int smCount) {
-    GreenPartition p{};
-    CUdevResource result;
+// Build a green context + stream from an already-carved-out SM resource. Checks
+// every driver call's return code; returns false (with *errOut / *stageOut set)
+// instead of aborting, so the caller can skip an invalid configuration with a
+// warning rather than crashing the whole sweep.
+static bool tryMakeGreenPartitionFromResource(CUdevice dev, CUdevResource* resource,
+                                               GreenPartition* out, CUresult* errOut,
+                                               const char** stageOut) {
+    CUdevResourceDesc desc;
+    *errOut = cuDevResourceGenerateDesc(&desc, resource, 1);
+    if (*errOut != CUDA_SUCCESS) { *stageOut = "cuDevResourceGenerateDesc"; return false; }
+
+    *errOut = cuGreenCtxCreate(&out->gctx, desc, dev, CU_GREEN_CTX_DEFAULT_STREAM);
+    if (*errOut != CUDA_SUCCESS) { *stageOut = "cuGreenCtxCreate"; return false; }
+
+    *errOut = cuCtxFromGreenCtx(&out->ctxView, out->gctx);
+    if (*errOut != CUDA_SUCCESS) {
+        *stageOut = "cuCtxFromGreenCtx";
+        cuGreenCtxDestroy(out->gctx);
+        return false;
+    }
+
+    *errOut = cuGreenCtxStreamCreate(&out->stream, out->gctx, CU_STREAM_NON_BLOCKING, /*priority=*/0);
+    if (*errOut != CUDA_SUCCESS) {
+        *stageOut = "cuGreenCtxStreamCreate";
+        cuGreenCtxDestroy(out->gctx);
+        return false;
+    }
+    return true;
+}
+
+// Partition the device's SMs into exactly two disjoint groups with a SINGLE
+// cuDevSmResourceSplitByCount call: result[0] gets minCount SMs, `remaining` gets
+// the rest. Both green contexts are built from THIS call's outputs (never from
+// two separate split calls -- see the file header comment on why). `minCount`
+// must be a multiple of 2 (Tegra requirement); the ratio being swept is
+// minCount:(kNumSMs - minCount).
+static bool trySplitAndMakeTwoPartitions(CUdevice dev, unsigned int minCount,
+                                          GreenPartition* p0, GreenPartition* p1,
+                                          CUresult* errOut, const char** stageOut) {
+    if (minCount == 0 || minCount >= kNumSMs || minCount % 2 != 0) {
+        *errOut = CUDA_ERROR_INVALID_VALUE;
+        *stageOut = "minCount must be even and in (0, 16) (Tegra requirement)";
+        return false;
+    }
+
+    CUdevResource smPool;
+    *errOut = cuDeviceGetDevResource(dev, &smPool, CU_DEV_RESOURCE_TYPE_SM);
+    if (*errOut != CUDA_SUCCESS) { *stageOut = "cuDeviceGetDevResource"; return false; }
+
+    CUdevResource result[1];
     CUdevResource remaining;
     unsigned int nbGroups = 1;
-    CU_CHECK(cuDevSmResourceSplitByCount(&result, &nbGroups, smPool, &remaining,
-                                          /*useFlags=*/0, smCount));
-    *smPool = remaining;  // caller passes the remainder into the next split
+    *errOut = cuDevSmResourceSplitByCount(result, &nbGroups, &smPool, &remaining,
+                                           /*useFlags=*/0, minCount);
+    if (*errOut != CUDA_SUCCESS) { *stageOut = "cuDevSmResourceSplitByCount"; return false; }
 
-    CUdevResourceDesc desc;
-    CU_CHECK(cuDevResourceGenerateDesc(&desc, &result, 1));
-    CU_CHECK(cuGreenCtxCreate(&p.gctx, desc, dev, CU_GREEN_CTX_DEFAULT_STREAM));
-    CU_CHECK(cuCtxFromGreenCtx(&p.ctxView, p.gctx));
-    CU_CHECK(cuGreenCtxStreamCreate(&p.stream, p.gctx, CU_STREAM_NON_BLOCKING, /*priority=*/0));
-    return p;
+    if (!tryMakeGreenPartitionFromResource(dev, &result[0], p0, errOut, stageOut)) {
+        return false;
+    }
+    if (!tryMakeGreenPartitionFromResource(dev, &remaining, p1, errOut, stageOut)) {
+        cuStreamDestroy(p0->stream);
+        cuGreenCtxDestroy(p0->gctx);
+        return false;
+    }
+    return true;
 }
 
 static void destroyGreenPartition(GreenPartition& p) {
@@ -341,15 +399,23 @@ static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0,
 #if GREEN_CTX_COMPILED
 // ---- measurement: green context (partitioned SMs) ----
 
-static double measureGreenWallMs(CUdevice dev, int sm0Count, int sm1Count,
-                                  float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
-                                  float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
-                                  int tpb, int trials, double* k0MsOut, double* k1MsOut) {
-    CUdevResource smPool;
-    CU_CHECK(cuDeviceGetDevResource(dev, &smPool, CU_DEV_RESOURCE_TYPE_SM));
-
-    GreenPartition p0 = makeGreenPartition(dev, &smPool, (unsigned int)sm0Count);
-    GreenPartition p1 = makeGreenPartition(dev, &smPool, (unsigned int)sm1Count);
+// Returns false (without measuring) if the driver rejected this SM ratio; the
+// caller warns and skips the cell instead of failing the whole sweep.
+static bool measureGreenWallMs(CUdevice dev, int sm0Count,
+                                float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
+                                float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
+                                int tpb, int trials,
+                                double* wallMsOut, double* k0MsOut, double* k1MsOut) {
+    GreenPartition p0{}, p1{};
+    CUresult err = CUDA_SUCCESS;
+    const char* stage = "";
+    if (!trySplitAndMakeTwoPartitions(dev, (unsigned int)sm0Count, &p0, &p1, &err, &stage)) {
+        const char* name = nullptr;
+        cuGetErrorName(err, &name);
+        fprintf(stderr, "WARNING: SM split %d:%d rejected at %s (%s) -- skipping this ratio\n",
+                sm0Count, (int)kNumSMs - sm0Count, stage, name ? name : "unknown");
+        return false;
+    }
 
     cudaStream_t s0 = (cudaStream_t)p0.stream;
     cudaStream_t s1 = (cudaStream_t)p1.stream;
@@ -403,16 +469,23 @@ static double measureGreenWallMs(CUdevice dev, int sm0Count, int sm1Count,
 
     *k0MsOut = computeStats(k0Ms).median;
     *k1MsOut = computeStats(k1Ms).median;
-    return computeStats(wallMs).median;
+    *wallMsOut = computeStats(wallMs).median;
+    return true;
 }
 
 // ---- verification: confirm each partition's blocks only ran on its assigned SMs ----
 
-static void runVerify(CUdevice dev, int sm0Count, int sm1Count, int blocks0, int blocks1, int tpb) {
-    CUdevResource smPool;
-    CU_CHECK(cuDeviceGetDevResource(dev, &smPool, CU_DEV_RESOURCE_TYPE_SM));
-    GreenPartition p0 = makeGreenPartition(dev, &smPool, (unsigned int)sm0Count);
-    GreenPartition p1 = makeGreenPartition(dev, &smPool, (unsigned int)sm1Count);
+static bool runVerify(CUdevice dev, int sm0Count, int blocks0, int blocks1, int tpb) {
+    GreenPartition p0{}, p1{};
+    CUresult err = CUDA_SUCCESS;
+    const char* stage = "";
+    if (!trySplitAndMakeTwoPartitions(dev, (unsigned int)sm0Count, &p0, &p1, &err, &stage)) {
+        const char* name = nullptr;
+        cuGetErrorName(err, &name);
+        fprintf(stderr, "WARNING: SM split %d:%d rejected at %s (%s) -- cannot verify this ratio\n",
+                sm0Count, (int)kNumSMs - sm0Count, stage, name ? name : "unknown");
+        return false;
+    }
 
     size_t n0Threads = (size_t)blocks0 * tpb;
     size_t n1Threads = (size_t)blocks1 * tpb;
@@ -442,7 +515,7 @@ static void runVerify(CUdevice dev, int sm0Count, int sm1Count, int blocks0, int
 
     printf("partition0 (%d SMs requested) observed smids:", sm0Count);
     for (auto id : smids0) printf(" %u", id);
-    printf("\npartition1 (%d SMs requested) observed smids:", sm1Count);
+    printf("\npartition1 (%d SMs requested) observed smids:", (int)kNumSMs - sm0Count);
     for (auto id : smids1) printf(" %u", id);
     printf("\noverlap: %zu smid(s) %s\n", overlap.size(),
            overlap.empty() ? "(disjoint -- partitioning confirmed)"
@@ -452,6 +525,7 @@ static void runVerify(CUdevice dev, int sm0Count, int sm1Count, int blocks0, int
     cudaFree(dOut1);
     destroyGreenPartition(p0);
     destroyGreenPartition(p1);
+    return true;
 }
 #endif  // GREEN_CTX_COMPILED
 
@@ -473,9 +547,18 @@ int main(int argc, char** argv) {
                              "Report this in the worklog.\n");
             return 3;
         }
-        if (a.sm0 + a.sm1 > 16) {
-            fprintf(stderr, "ERROR: sm0(%d)+sm1(%d) > 16 SMs available on this device\n", a.sm0, a.sm1);
+        // The split is a single cuDevSmResourceSplitByCount(minCount=sm0) call;
+        // partition 1 automatically gets the remaining 16 - sm0 SMs, so sm1 is
+        // only accepted as a consistency check. Tegra requires minCount % 2 == 0.
+        if (a.sm0 + a.sm1 != 16) {
+            fprintf(stderr, "ERROR: sm0(%d)+sm1(%d) must sum to 16 (partition 1 = remainder)\n",
+                    a.sm0, a.sm1);
             return 2;
+        }
+        if (a.sm0 <= 0 || a.sm0 >= 16 || a.sm0 % 2 != 0) {
+            fprintf(stderr, "WARNING: sm0=%d invalid on Tegra (must be even, 0 < sm0 < 16) "
+                             "-- skipping this ratio\n", a.sm0);
+            return 4;
         }
     }
 
@@ -502,16 +585,17 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if (a.verify) {
+        int rc = 0;
 #if GREEN_CTX_COMPILED
-        runVerify(dev, a.sm0, a.sm1, a.blocks0, a.blocks1, a.tpb);
+        if (!runVerify(dev, a.sm0, a.blocks0, a.blocks1, a.tpb)) rc = 4;
 #else
         fprintf(stderr, "ERROR: --verify requires green context support; not compiled in "
                          "(CUDA_VERSION < %d)\n", PHASE3_MIN_CUDA_VERSION);
-        return 3;
+        rc = 3;
 #endif
         cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
         cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
-        return 0;
+        return rc;
     }
 
     EnvInfo env = queryEnv();
@@ -525,8 +609,13 @@ int main(int argc, char** argv) {
         smSplit1 = 16;
     } else {
 #if GREEN_CTX_COMPILED
-        wallMs = measureGreenWallMs(dev, a.sm0, a.sm1, dA0, dB0, dC0, n0, a.blocks0,
-                                     dA1, dB1, dC1, n1, a.blocks1, a.tpb, a.trials, &k0Ms, &k1Ms);
+        if (!measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, a.blocks0,
+                                 dA1, dB1, dC1, n1, a.blocks1, a.tpb, a.trials,
+                                 &wallMs, &k0Ms, &k1Ms)) {
+            cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+            cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+            return 4;  // ratio rejected by driver: sweep.py warns and skips this cell
+        }
         smSplit0 = a.sm0;
         smSplit1 = a.sm1;
 #endif

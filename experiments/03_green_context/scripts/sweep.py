@@ -75,8 +75,11 @@ def nearest_saturation_blocks(sat_blocks_by_size, size_bytes):
 
 
 def asymmetric_splits(k0_bytes, k1_bytes):
+    # Tegra green-context rule: the split's minCount (K0's share) must be a
+    # multiple of 2, so round the size-proportional target to the nearest even
+    # SM count before sweeping its +/-2 neighbors.
     total = k0_bytes + k1_bytes
-    target0 = round(NUM_SMS * k0_bytes / total)
+    target0 = round(NUM_SMS * k0_bytes / total / 2) * 2
     target0 = max(2, min(NUM_SMS - 2, target0))
     candidates = sorted({max(2, min(NUM_SMS - 2, target0 + d)) for d in (-2, 0, 2)})
     return [(c, NUM_SMS - c) for c in candidates]
@@ -164,6 +167,12 @@ def run_cell(cell, trials):
         "--trials", str(trials),
     ]
     proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode == 4:
+        # phase3_bench: this SM ratio was invalid or rejected by the driver.
+        # Skip the cell with a warning instead of hard-failing the sweep.
+        print(f"WARNING: skipping cell (SM ratio {cell['sm0']}:{cell['sm1']} rejected): "
+              f"{proc.stderr.strip()}", file=sys.stderr)
+        return None
     if proc.returncode != 0:
         sys.exit(f"phase3_bench failed for cell {cell}: rc={proc.returncode}\n{proc.stderr}")
     line = proc.stdout.strip().splitlines()[-1]
@@ -218,10 +227,14 @@ def main():
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
 
     raw_rows = []
+    skipped = 0
     for i, cell in enumerate(cells):
         print(f"[{i + 1}/{len(cells)}] {cell['test_point_id']} config={cell['config']} "
               f"sm={cell['sm0']}:{cell['sm1']}", file=sys.stderr)
         line = run_cell(cell, args.trials)
+        if line is None:
+            skipped += 1
+            continue
         raw_rows.append(line.split(","))
 
     final_rows = fill_deltas(raw_rows)
@@ -231,6 +244,9 @@ def main():
             f.write(",".join(r) + "\n")
 
     print(f"wrote {CSV_PATH}")
+    if skipped:
+        print(f"NOTE: {skipped} cell(s) skipped (invalid/rejected SM ratios -- see WARNINGs above)",
+              file=sys.stderr)
     if warnings:
         print("Reminder: this run used placeholder upstream values (see WARNINGs above) -- "
               "re-run once the missing findings.json exists.", file=sys.stderr)
