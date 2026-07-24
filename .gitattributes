@@ -1,0 +1,26 @@
+# Normalize all text files to LF in the repo (Jetson/Linux is the build+run target).
+* text=auto eol=lf
+
+# Explicit text types
+*.cu   text eol=lf
+*.cuh  text eol=lf
+*.cpp  text eol=lf
+*.cc   text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.hpp  text eol=lf
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.csv  text eol=lf
+*.txt  text eol=lf
+Makefile text eol=lf
+
+# Binary — never touch line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.pdf  binary
+*.nsys-rep binary
+*.ncu-rep binary

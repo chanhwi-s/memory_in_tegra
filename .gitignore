@@ -1,0 +1,41 @@
+# ---- Build artifacts ----
+*.o
+*.obj
+*.out
+*.exe
+a.out
+bin/
+build/
+experiments/**/build/
+experiments/**/bin/
+
+# ---- CUDA / Nsight profiling output (can be large) ----
+*.nsys-rep
+*.ncu-rep
+*.qdrep
+*.sqlite
+nsight/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---- Transient / logs ----
+*.tmp
+*.log
+experiments/**/results/*.tmp
+
+# NOTE: committed results are intentional — CSVs and plots under
+# experiments/**/results/ are kept (they are the analysis record).
