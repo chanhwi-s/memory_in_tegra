@@ -1,0 +1,8 @@
+{
+  "consumed": [
+    "experiments/01_single_kernel_size/findings.json",
+    "experiments/02_two_kernel_size/findings.json",
+    "experiments/03_green_context/findings.json"
+  ],
+  "warnings": []
+}

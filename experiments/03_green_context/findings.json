@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "phase": "03_green_context",
+  "generated_utc": "2026-07-24T08:57:29Z",
+  "source_csv": "experiments/03_green_context/results/phase3_results.csv",
+  "env_ref": "shared/env.md",
+  "results": {
+    "per_point": [
+      {
+        "test_point_id": "asym_2",
+        "mode": "asymmetric",
+        "shared_agg_GBps": 155.176,
+        "best_green_agg_GBps": 144.176,
+        "best_sm_split": "6:10",
+        "delta_pct": -7.089,
+        "regime": "DRAM-bound"
+      },
+      {
+        "test_point_id": "sym_0",
+        "mode": "symmetric",
+        "shared_agg_GBps": 135.512,
+        "best_green_agg_GBps": 127.952,
+        "best_sm_split": "10:6",
+        "delta_pct": -5.579,
+        "regime": "DRAM-bound"
+      },
+      {
+        "test_point_id": "sym_1",
+        "mode": "symmetric",
+        "shared_agg_GBps": 156.286,
+        "best_green_agg_GBps": 137.424,
+        "best_sm_split": "8:8",
+        "delta_pct": -12.069,
+        "regime": "DRAM-bound"
+      }
+    ],
+    "best_partition_ratios": {
+      "symmetric": "10:6",
+      "asymmetric": "6:10"
+    },
+    "green_context_helps_when": "neutral/hurt at: asym_2, sym_0, sym_1 (threshold: best-green delta > 2.0% vs shared).",
+    "configs_for_phase4": [
+      {
+        "test_point_id": "asym_2",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_0",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_1",
+        "config": "shared",
+        "sm_split": "16:16"
+      }
+    ]
+  },
+  "consumed": [
+    "experiments/01_single_kernel_size/findings.json",
+    "experiments/02_two_kernel_size/findings.json"
+  ]
+}

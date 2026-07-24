@@ -1,0 +1,4 @@
+test_point_id,mode,config,sm_split_k0,sm_split_k1,k0_bytes,k1_bytes,large_kernel_id,blocks_k0,blocks_k1,threads_per_block
+asym_2,asymmetric,shared,0,0,1048576,2097152,1,64,256,256
+sym_0,symmetric,shared,0,0,917504,917504,1,64,64,256
+sym_1,symmetric,shared,0,0,917504,917504,1,64,64,256

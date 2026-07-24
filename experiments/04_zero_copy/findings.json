@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "phase": "04_zero_copy",
+  "generated_utc": "2026-07-24T08:58:29Z",
+  "source_csv": "experiments/04_zero_copy/results/phase4_results.csv",
+  "env_ref": "shared/env.md",
+  "results": {
+    "per_config": [
+      {
+        "test_point_id": "asym_2",
+        "config": "shared",
+        "crossover_reuse_N": 2,
+        "crossover_note": "delta flipped sign at reuse_N=2",
+        "zc_delta_at_N1_pct": -11.9,
+        "bound_conclusion": "compute-bound",
+        "l2_bypass_verified": false,
+        "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
+      },
+      {
+        "test_point_id": "sym_0",
+        "config": "shared",
+        "crossover_reuse_N": 4,
+        "crossover_note": "delta flipped sign at reuse_N=4",
+        "zc_delta_at_N1_pct": 21.49,
+        "bound_conclusion": "memory-bound",
+        "l2_bypass_verified": false,
+        "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
+      },
+      {
+        "test_point_id": "sym_1",
+        "config": "shared",
+        "crossover_reuse_N": 0,
+        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
+        "zc_delta_at_N1_pct": 14.22,
+        "bound_conclusion": "memory-bound",
+        "l2_bypass_verified": false,
+        "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
+      }
+    ],
+    "headline": "Zero copy helped most at 'sym_0' (shared): +21.5% aggregate throughput at reuse N=1, crossing over to cache-favored around reuse N=4 \u2014 evidence the bottleneck there was L2/SLC contention, not compute."
+  },
+  "consumed": [
+    "experiments/01_single_kernel_size/findings.json",
+    "experiments/02_two_kernel_size/findings.json",
+    "experiments/03_green_context/findings.json"
+  ]
+}
