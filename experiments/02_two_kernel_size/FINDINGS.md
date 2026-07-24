@@ -1,6 +1,6 @@
 # Phase 2 Findings — Two-Kernel Size Sweep
 
-Generated 2026-07-24T08:25:32Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
+Generated 2026-07-24T08:31:27Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
 computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not hand-edit)
 if the CSV is regenerated. Consumed upstream: experiments/01_single_kernel_size/findings.json.
 
@@ -8,7 +8,7 @@ if the CSV is regenerated. Consumed upstream: experiments/01_single_kernel_size/
 
 - **Per-kernel size (worst measured contention):** 917,504 bytes (~0.88 MB)
 - **Combined read footprint:** 3,670,016 bytes
-- **scaling_efficiency at this point (local minimum):** 0.2598
+- **scaling_efficiency at this point (local minimum):** 0.2627
 
 `symmetric_roofline_points` (onset + ~90%-below point, for Phase 3/4): see `findings.json`.
 Onset here is defined as the local minimum of `scaling_efficiency` across the sweep, not the
@@ -18,9 +18,9 @@ for why (real data need not decay monotonically from ~1.0).
 ## 2b — Asymmetric result at k
 
 - **k (per-buffer bytes):** 2,097,152
-- **aggregate GB/s at k:** 158.172
-- **K0 GB/s at k:** 81.852
-- **K1 GB/s at k:** 105.448
+- **aggregate GB/s at k:** 155.094
+- **K0 GB/s at k:** 80.511
+- **K1 GB/s at k:** 103.396
 
 ## Recommended Phase 3 test points
 

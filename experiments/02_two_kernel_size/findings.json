@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
   "phase": "02_two_kernel_size",
-  "generated_utc": "2026-07-24T08:25:32Z",
+  "generated_utc": "2026-07-24T08:31:27Z",
   "source_csv": "experiments/02_two_kernel_size/results/phase2_results.csv",
   "env_ref": "shared/env.md",
   "results": {
     "symmetric_contention_onset": {
       "per_kernel_bytes": 917504,
       "combined_footprint_bytes": 3670016,
-      "scaling_efficiency": 0.2598
+      "scaling_efficiency": 0.2627
     },
     "symmetric_roofline_points": {
       "onset": {
@@ -20,9 +20,9 @@
     },
     "asymmetric_k_used_bytes": 2097152,
     "asymmetric_result_at_k": {
-      "agg_GBps": 158.172,
-      "k0_GBps": 81.852,
-      "k1_GBps": 105.448
+      "agg_GBps": 155.094,
+      "k0_GBps": 80.511,
+      "k1_GBps": 103.396
     },
     "recommended_phase3_test_points": [
       {
