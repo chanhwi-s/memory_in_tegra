@@ -54,7 +54,7 @@ def per_point_summary(df):
 
         per_point.append({
             "test_point_id": tp,
-            "mode": sub.mode.iloc[0],
+            "mode": sub["mode"].iloc[0],  # bracket access: .mode collides with DataFrame.mode()
             "shared_agg_GBps": round(shared_agg, 3),
             "best_green_agg_GBps": round(best_green_agg, 3) if best_green_agg is not None else None,
             "best_sm_split": best_split,
@@ -132,7 +132,7 @@ def main():
         "consumed": consumed,
     }
 
-    with open(FINDINGS_JSON_PATH, "w") as f:
+    with open(FINDINGS_JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(findings, f, indent=2)
         f.write("\n")
     print(f"wrote {FINDINGS_JSON_PATH}")
@@ -177,7 +177,7 @@ partition's blocks only ran on their assigned SMs (disjoint smid sets expected).
 If that file reports overlap, treat this findings.json as suspect and STOP before
 Phase 4 consumes it.
 """
-    with open(FINDINGS_MD_PATH, "w") as f:
+    with open(FINDINGS_MD_PATH, "w", encoding="utf-8") as f:
         f.write(md)
     print(f"wrote {FINDINGS_MD_PATH}")
 

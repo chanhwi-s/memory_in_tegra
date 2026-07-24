@@ -12,7 +12,9 @@ BIN="$PHASE_DIR/build/phase3_bench"
 
 mkdir -p "$PHASE_DIR/results/plots" "$REPO_ROOT/shared"
 
-if [ ! -x "$BIN" ]; then
+# Rebuild if the binary is missing OR the source is newer than the binary --
+# a stale binary here once silently ran pre-fix code and wasted a debug cycle.
+if [ ! -x "$BIN" ] || [ "$PHASE_DIR/src/phase3_bench.cu" -nt "$BIN" ]; then
     "$SCRIPT_DIR/build.sh"
 fi
 
