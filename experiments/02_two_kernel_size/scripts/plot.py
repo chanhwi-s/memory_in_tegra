@@ -18,7 +18,6 @@ PHASE1_FINDINGS = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size"
 
 L2_BYTES = 4 * 1024 * 1024
 L2_SLC_BYTES = 8 * 1024 * 1024
-ONSET_EFFICIENCY_THRESHOLD = 0.95  # matches derive_findings.py
 
 
 def load_k_bytes():
@@ -62,16 +61,17 @@ def plot_symmetric(df):
     ax1.text(L2_SLC_BYTES, ax1.get_ylim()[1], " 8MB (L2+SLC)", va="top", ha="left", fontsize=8,
              color="gray")
 
+    # Onset = local minimum of scaling_efficiency (worst measured contention), matching
+    # derive_findings.py's contention_onset() -- not the first point below a fixed threshold,
+    # since real data need not decay monotonically from ~1.0.
     valid_eff = sym[sym.scaling_efficiency >= 0]
-    onset_row = None
     if not valid_eff.empty:
-        below = valid_eff[valid_eff.scaling_efficiency < ONSET_EFFICIENCY_THRESHOLD]
-        if not below.empty:
-            onset_row = below.iloc[0]
-            ax1.axvline(onset_row.combined_read_footprint_bytes, color="firebrick", linestyle="--",
-                        linewidth=1.5)
-            ax1.text(onset_row.combined_read_footprint_bytes, ax1.get_ylim()[0],
-                      " contention onset", va="bottom", ha="left", fontsize=8, color="firebrick")
+        onset_row = valid_eff.loc[valid_eff.scaling_efficiency.idxmin()]
+        ax1.axvline(onset_row.combined_read_footprint_bytes, color="firebrick", linestyle="--",
+                    linewidth=1.5)
+        ax1.text(onset_row.combined_read_footprint_bytes, ax1.get_ylim()[0],
+                  " contention onset (min efficiency)", va="bottom", ha="left", fontsize=8,
+                  color="firebrick")
 
     ax2 = ax1.twinx()
     if not valid_eff.empty:

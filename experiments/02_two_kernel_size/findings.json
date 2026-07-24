@@ -1,21 +1,21 @@
 {
   "schema_version": "1.0",
   "phase": "02_two_kernel_size",
-  "generated_utc": "2026-07-24T08:11:58Z",
+  "generated_utc": "2026-07-24T08:25:32Z",
   "source_csv": "experiments/02_two_kernel_size/results/phase2_results.csv",
   "env_ref": "shared/env.md",
   "results": {
     "symmetric_contention_onset": {
-      "per_kernel_bytes": 131072,
-      "combined_footprint_bytes": 524288,
-      "scaling_efficiency": 0.5016
+      "per_kernel_bytes": 917504,
+      "combined_footprint_bytes": 3670016,
+      "scaling_efficiency": 0.2598
     },
     "symmetric_roofline_points": {
       "onset": {
-        "per_kernel_bytes": 131072
+        "per_kernel_bytes": 917504
       },
       "ninety_pct": {
-        "per_kernel_bytes": null
+        "per_kernel_bytes": 786432
       }
     },
     "asymmetric_k_used_bytes": 2097152,
@@ -27,7 +27,11 @@
     "recommended_phase3_test_points": [
       {
         "mode": "symmetric",
-        "per_kernel_bytes": 131072
+        "per_kernel_bytes": 917504
+      },
+      {
+        "mode": "symmetric",
+        "per_kernel_bytes": 786432
       },
       {
         "mode": "asymmetric",

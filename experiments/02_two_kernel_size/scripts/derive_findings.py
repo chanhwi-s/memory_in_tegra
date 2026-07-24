@@ -21,20 +21,22 @@ PHASE1_FINDINGS_PATH = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_
                                      "findings.json")
 PHASE1_FINDINGS_REL = "experiments/01_single_kernel_size/findings.json"
 
-ONSET_EFFICIENCY_THRESHOLD = 0.95  # scaling_efficiency below this = "contention onset"
+NO_CONTENTION_OBSERVED_THRESHOLD = 0.95  # min efficiency at/above this => sweep likely too narrow
 
 
 def contention_onset(sym):
-    """First (smallest-footprint) symmetric row whose scaling_efficiency drops below the
-    threshold. Returns None if no row has a valid ref (all scaling_efficiency == -1) or
-    none drops below threshold within the measured range."""
+    """The symmetric row at the *local minimum* of scaling_efficiency -- the point of worst
+    measured contention -- not simply the first row below a fixed threshold. Real hardware
+    data is not guaranteed to start near 1.0 and decay monotonically: e.g. SM-scheduling
+    contention (green context is still OFF in Phase 2) can already depress efficiency at the
+    smallest tested size, while the *worst* contention shows up mid-sweep near a cache-capacity
+    crossover and then partially recovers once both kernels are DRAM-bound. A first-below-
+    threshold rule would just return the smallest size tested and miss that dip entirely.
+    Returns None if no row has a valid ref (all scaling_efficiency == -1)."""
     valid = sym[sym.scaling_efficiency >= 0].sort_values("combined_read_footprint_bytes")
     if valid.empty:
         return None
-    below = valid[valid.scaling_efficiency < ONSET_EFFICIENCY_THRESHOLD]
-    if below.empty:
-        return None
-    return below.iloc[0]
+    return valid.loc[valid.scaling_efficiency.idxmin()]
 
 
 def ninety_pct_point(sym, onset_row):
@@ -76,11 +78,16 @@ def main():
             "ninety_pct": {"per_kernel_bytes": int(ninety_row.k0_bytes) if ninety_row is not None
                            else None},
         }
+        if onset_row.scaling_efficiency >= NO_CONTENTION_OBSERVED_THRESHOLD:
+            warnings.append(f"Minimum scaling_efficiency in the measured range is "
+                             f"{onset_row.scaling_efficiency:.3f} (>= "
+                             f"{NO_CONTENTION_OBSERVED_THRESHOLD}) -- the sweep may not have "
+                             "reached real contention; consider extending the size range.")
     else:
-        warnings.append("No symmetric contention onset found (scaling_efficiency stayed >= "
-                         f"{ONSET_EFFICIENCY_THRESHOLD} across the measured range, or refs were "
-                         "unavailable/-1 because Phase 1 hasn't been run). Re-check once Phase 1 "
-                         "findings are real and/or extend the symmetric size sweep.")
+        warnings.append("No symmetric rows with a valid single-kernel reference (all "
+                         "scaling_efficiency == -1 because Phase 1 hasn't been run, or no "
+                         "symmetric rows at all). Re-run gen_config.py + the sweep once Phase 1 "
+                         "has real findings.")
         results["symmetric_contention_onset"] = None
         results["symmetric_roofline_points"] = None
 
@@ -142,11 +149,12 @@ def main():
     print(f"wrote {FINDINGS_JSON_PATH}")
 
     onset_md = (
-        f"- **Per-kernel size:** {results['symmetric_contention_onset']['per_kernel_bytes']:,} bytes "
+        f"- **Per-kernel size (worst measured contention):** "
+        f"{results['symmetric_contention_onset']['per_kernel_bytes']:,} bytes "
         f"(~{results['symmetric_contention_onset']['per_kernel_bytes'] / (1024*1024):.2f} MB)\n"
         f"- **Combined read footprint:** {results['symmetric_contention_onset']['combined_footprint_bytes']:,} bytes\n"
-        f"- **scaling_efficiency at onset:** {results['symmetric_contention_onset']['scaling_efficiency']}"
-        if results["symmetric_contention_onset"] else "Not found in the measured range — see warnings below."
+        f"- **scaling_efficiency at this point (local minimum):** {results['symmetric_contention_onset']['scaling_efficiency']}"
+        if results["symmetric_contention_onset"] else "Not found — see warnings below."
     )
 
     asym_md = (
@@ -165,11 +173,14 @@ Generated {findings['generated_utc']} from `{findings['source_csv']}`. All numbe
 computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not hand-edit)
 if the CSV is regenerated. Consumed upstream: {', '.join(consumed) if consumed else 'none (Phase 1 findings.json not available yet)'}.
 
-## 2a — Symmetric contention onset
+## 2a — Symmetric contention onset (worst measured contention, i.e. the local minimum of scaling_efficiency)
 
 {onset_md}
 
 `symmetric_roofline_points` (onset + ~90%-below point, for Phase 3/4): see `findings.json`.
+Onset here is defined as the local minimum of `scaling_efficiency` across the sweep, not the
+first point below a fixed threshold -- see the docstring on `contention_onset()` in this script
+for why (real data need not decay monotonically from ~1.0).
 
 ## 2b — Asymmetric result at k
 
@@ -186,8 +197,17 @@ if the CSV is regenerated. Consumed upstream: {', '.join(consumed) if consumed e
 ## Verification (00_conventions.md / prompt Verification section)
 
 Re-check by eye against `results/plots/sym_agg_vs_footprint.png` and `results/plots/asym_vs_k1.png`:
-- Symmetric: scaling_efficiency should be ~1 well below L2 (4 MB combined) and drop as combined
-  footprint exceeds cache.
+- scaling_efficiency = agg_GBps_median / (single_k0_GBps_ref + single_k1_GBps_ref) -- how close
+  the concurrent run gets to *ideal* 2x scaling (both kernels achieving their own isolated
+  Phase-1 throughput at the same time). 1.0 = no contention; ~0.5 is the expected *floor* once
+  both kernels are DRAM-bound (they share one memory bus, so aggregate caps near a single
+  kernel's DRAM peak while the reference sum assumes two); below ~0.5 means real overhead beyond
+  fair bandwidth-sharing (e.g. cache thrashing at a capacity crossover, or SM-scheduling
+  contention with green context still OFF).
+- On real hardware this need not start at ~1.0 and decay monotonically -- it can dip to its
+  *worst* value mid-sweep (near a cache-capacity crossover) and partially recover at larger,
+  DRAM-bound sizes. `symmetric_contention_onset` above is that local minimum, not the first
+  point below a fixed threshold.
 - The benchmark binary itself (`src/phase2_bench.cu`) prints a `WARNING` to stderr for any cell
   where `wall_ms_median >= serial_sum_ms` (no measured overlap) or a correctness mismatch — check
   the run log for these before trusting this file.
