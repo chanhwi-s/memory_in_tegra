@@ -1,61 +1,604 @@
 {
   "schema_version": "1.0",
   "phase": "03_green_context",
-  "generated_utc": "2026-07-24T08:57:29Z",
+  "generated_utc": "2026-07-24T12:24:38Z",
   "source_csv": "experiments/03_green_context/results/phase3_results.csv",
   "env_ref": "shared/env.md",
   "results": {
     "per_point": [
       {
-        "test_point_id": "asym_2",
+        "test_point_id": "asym_65536",
         "mode": "asymmetric",
-        "shared_agg_GBps": 155.176,
-        "best_green_agg_GBps": 144.176,
-        "best_sm_split": "6:10",
-        "delta_pct": -7.089,
-        "regime": "DRAM-bound"
+        "is_anchor": false,
+        "swept_size_bytes": 65536,
+        "k0_bytes": 1048576,
+        "k1_bytes": 65536,
+        "shared_agg_GBps": 160.813,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 174.516,
+        "best_sm_split": "14:2",
+        "best_green_plateau_reached": true,
+        "delta_pct": 8.521,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": true
       },
       {
-        "test_point_id": "sym_0",
-        "mode": "symmetric",
-        "shared_agg_GBps": 135.512,
-        "best_green_agg_GBps": 127.952,
+        "test_point_id": "asym_117965",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 117965,
+        "k0_bytes": 1048576,
+        "k1_bytes": 117965,
+        "shared_agg_GBps": 231.947,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 207.323,
+        "best_sm_split": "12:4",
+        "best_green_plateau_reached": false,
+        "delta_pct": -10.616,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_212337",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 212337,
+        "k0_bytes": 1048576,
+        "k1_bytes": 212337,
+        "shared_agg_GBps": 183.414,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 153.82,
+        "best_sm_split": "14:2",
+        "best_green_plateau_reached": true,
+        "delta_pct": -16.135,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_382206",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 382206,
+        "k0_bytes": 1048576,
+        "k1_bytes": 382206,
+        "shared_agg_GBps": 162.984,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 158.647,
         "best_sm_split": "10:6",
-        "delta_pct": -5.579,
-        "regime": "DRAM-bound"
+        "best_green_plateau_reached": false,
+        "delta_pct": -2.661,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
       },
       {
-        "test_point_id": "sym_1",
+        "test_point_id": "asym_687971",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 687971,
+        "k0_bytes": 1048576,
+        "k1_bytes": 687971,
+        "shared_agg_GBps": 137.792,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 136.578,
+        "best_sm_split": "10:6",
+        "best_green_plateau_reached": false,
+        "delta_pct": -0.881,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_1238347",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 1238347,
+        "k0_bytes": 1048576,
+        "k1_bytes": 1238347,
+        "shared_agg_GBps": 153.361,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 137.435,
+        "best_sm_split": "6:10",
+        "best_green_plateau_reached": false,
+        "delta_pct": -10.385,
+        "regime": "L2+SLC-resident",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_anchor_2_2097152",
+        "mode": "asymmetric",
+        "is_anchor": true,
+        "swept_size_bytes": 2097152,
+        "k0_bytes": 1048576,
+        "k1_bytes": 2097152,
+        "shared_agg_GBps": 161.951,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 149.021,
+        "best_sm_split": "6:10",
+        "best_green_plateau_reached": true,
+        "delta_pct": -7.984,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_2229025",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 2229025,
+        "k0_bytes": 1048576,
+        "k1_bytes": 2229025,
+        "shared_agg_GBps": 156.613,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 147.728,
+        "best_sm_split": "6:10",
+        "best_green_plateau_reached": true,
+        "delta_pct": -5.673,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_4012245",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 4012245,
+        "k0_bytes": 1048576,
+        "k1_bytes": 4012245,
+        "shared_agg_GBps": 162.958,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 161.05,
+        "best_sm_split": "4:12",
+        "best_green_plateau_reached": false,
+        "delta_pct": -1.171,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_7222041",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 7222041,
+        "k0_bytes": 1048576,
+        "k1_bytes": 7222041,
+        "shared_agg_GBps": 179.942,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 168.138,
+        "best_sm_split": "4:12",
+        "best_green_plateau_reached": false,
+        "delta_pct": -6.56,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "asym_8388608",
+        "mode": "asymmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 8388608,
+        "k0_bytes": 1048576,
+        "k1_bytes": 8388608,
+        "shared_agg_GBps": 180.117,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 170.371,
+        "best_sm_split": "4:12",
+        "best_green_plateau_reached": false,
+        "delta_pct": -5.411,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_65536",
         "mode": "symmetric",
-        "shared_agg_GBps": 156.286,
-        "best_green_agg_GBps": 137.424,
+        "is_anchor": false,
+        "swept_size_bytes": 65536,
+        "k0_bytes": 65536,
+        "k1_bytes": 65536,
+        "shared_agg_GBps": 28.248,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 24.454,
+        "best_sm_split": "12:4",
+        "best_green_plateau_reached": true,
+        "delta_pct": -13.431,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_117965",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 117965,
+        "k0_bytes": 117965,
+        "k1_bytes": 117965,
+        "shared_agg_GBps": 49.152,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 45.936,
+        "best_sm_split": "10:6",
+        "best_green_plateau_reached": true,
+        "delta_pct": -6.543,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_212337",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 212337,
+        "k0_bytes": 212337,
+        "k1_bytes": 212337,
+        "shared_agg_GBps": 80.026,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 73.186,
         "best_sm_split": "8:8",
-        "delta_pct": -12.069,
-        "regime": "DRAM-bound"
+        "best_green_plateau_reached": true,
+        "delta_pct": -8.547,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_382206",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 382206,
+        "k0_bytes": 382206,
+        "k1_bytes": 382206,
+        "shared_agg_GBps": 145.805,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 133.203,
+        "best_sm_split": "6:10",
+        "best_green_plateau_reached": true,
+        "delta_pct": -8.643,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_687971",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 687971,
+        "k0_bytes": 687971,
+        "k1_bytes": 687971,
+        "shared_agg_GBps": 173.03,
+        "shared_plateau_reached": false,
+        "best_green_agg_GBps": 172.222,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": false,
+        "delta_pct": -0.467,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_anchor_1_786432",
+        "mode": "symmetric",
+        "is_anchor": true,
+        "swept_size_bytes": 786432,
+        "k0_bytes": 786432,
+        "k1_bytes": 786432,
+        "shared_agg_GBps": 147.088,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 130.204,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": true,
+        "delta_pct": -11.479,
+        "regime": "L1/scheduling-sensitive",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_anchor_0_917504",
+        "mode": "symmetric",
+        "is_anchor": true,
+        "swept_size_bytes": 917504,
+        "k0_bytes": 917504,
+        "k1_bytes": 917504,
+        "shared_agg_GBps": 148.24,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 143.062,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": true,
+        "delta_pct": -3.493,
+        "regime": "L2+SLC-resident",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_1238347",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 1238347,
+        "k0_bytes": 1238347,
+        "k1_bytes": 1238347,
+        "shared_agg_GBps": 151.758,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 138.579,
+        "best_sm_split": "6:10",
+        "best_green_plateau_reached": true,
+        "delta_pct": -8.684,
+        "regime": "L2+SLC-resident",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_2229025",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 2229025,
+        "k0_bytes": 2229025,
+        "k1_bytes": 2229025,
+        "shared_agg_GBps": 165.162,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 160.469,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": true,
+        "delta_pct": -2.841,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_4012245",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 4012245,
+        "k0_bytes": 4012245,
+        "k1_bytes": 4012245,
+        "shared_agg_GBps": 178.82,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 172.644,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": true,
+        "delta_pct": -3.454,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_7222041",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 7222041,
+        "k0_bytes": 7222041,
+        "k1_bytes": 7222041,
+        "shared_agg_GBps": 182.498,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 177.684,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": true,
+        "delta_pct": -2.638,
+        "regime": "DRAM-bound",
+        "beats_shared": false
+      },
+      {
+        "test_point_id": "sym_8388608",
+        "mode": "symmetric",
+        "is_anchor": false,
+        "swept_size_bytes": 8388608,
+        "k0_bytes": 8388608,
+        "k1_bytes": 8388608,
+        "shared_agg_GBps": 182.403,
+        "shared_plateau_reached": true,
+        "best_green_agg_GBps": 174.414,
+        "best_sm_split": "8:8",
+        "best_green_plateau_reached": false,
+        "delta_pct": -4.38,
+        "regime": "DRAM-bound",
+        "beats_shared": false
       }
     ],
     "best_partition_ratios": {
-      "symmetric": "10:6",
-      "asymmetric": "6:10"
+      "symmetric": {
+        "DRAM-bound": {
+          "sm_split": "8:8",
+          "delta_pct": -2.638,
+          "test_point_id": "sym_7222041"
+        },
+        "L1/scheduling-sensitive": {
+          "sm_split": "8:8",
+          "delta_pct": -0.467,
+          "test_point_id": "sym_687971"
+        },
+        "L2+SLC-resident": {
+          "sm_split": "8:8",
+          "delta_pct": -3.493,
+          "test_point_id": "sym_anchor_0_917504"
+        }
+      },
+      "asymmetric": {
+        "DRAM-bound": {
+          "sm_split": "4:12",
+          "delta_pct": -1.171,
+          "test_point_id": "asym_4012245"
+        },
+        "L1/scheduling-sensitive": {
+          "sm_split": "14:2",
+          "delta_pct": 8.521,
+          "test_point_id": "asym_65536"
+        },
+        "L2+SLC-resident": {
+          "sm_split": "6:10",
+          "delta_pct": -10.385,
+          "test_point_id": "asym_1238347"
+        }
+      }
     },
-    "green_context_helps_when": "neutral/hurt at: asym_2, sym_0, sym_1 (threshold: best-green delta > 2.0% vs shared).",
+    "green_context_helps_when": "Green beat shared by >2.0% at 1 point(s) (regimes: L1/scheduling-sensitive), swept-size range 65,536-65,536 bytes.",
+    "green_helps_size_regime": {
+      "helps": true,
+      "prose": "Green beat shared by >2.0% at 1 point(s) (regimes: L1/scheduling-sensitive), swept-size range 65,536-65,536 bytes.",
+      "qualifying_points": [
+        {
+          "test_point_id": "asym_65536",
+          "mode": "asymmetric",
+          "swept_size_bytes": 65536,
+          "delta_pct": 8.521,
+          "regime": "L1/scheduling-sensitive",
+          "best_sm_split": "14:2"
+        }
+      ]
+    },
     "configs_for_phase4": [
       {
-        "test_point_id": "asym_2",
+        "test_point_id": "asym_65536",
+        "mode": "asymmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "green",
+        "sm_split": "14:2"
+      },
+      {
+        "test_point_id": "asym_117965",
+        "mode": "asymmetric",
+        "regime": "L1/scheduling-sensitive",
         "config": "shared",
         "sm_split": "16:16"
       },
       {
-        "test_point_id": "sym_0",
+        "test_point_id": "asym_212337",
+        "mode": "asymmetric",
+        "regime": "L1/scheduling-sensitive",
         "config": "shared",
         "sm_split": "16:16"
       },
       {
-        "test_point_id": "sym_1",
+        "test_point_id": "asym_382206",
+        "mode": "asymmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_687971",
+        "mode": "asymmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_1238347",
+        "mode": "asymmetric",
+        "regime": "L2+SLC-resident",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_anchor_2_2097152",
+        "mode": "asymmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_2229025",
+        "mode": "asymmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_4012245",
+        "mode": "asymmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_7222041",
+        "mode": "asymmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "asym_8388608",
+        "mode": "asymmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_65536",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_117965",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_212337",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_382206",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_687971",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_anchor_1_786432",
+        "mode": "symmetric",
+        "regime": "L1/scheduling-sensitive",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_anchor_0_917504",
+        "mode": "symmetric",
+        "regime": "L2+SLC-resident",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_1238347",
+        "mode": "symmetric",
+        "regime": "L2+SLC-resident",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_2229025",
+        "mode": "symmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_4012245",
+        "mode": "symmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_7222041",
+        "mode": "symmetric",
+        "regime": "DRAM-bound",
+        "config": "shared",
+        "sm_split": "16:16"
+      },
+      {
+        "test_point_id": "sym_8388608",
+        "mode": "symmetric",
+        "regime": "DRAM-bound",
         "config": "shared",
         "sm_split": "16:16"
       }
-    ]
+    ],
+    "block_saturation_sanity_gate": {
+      "phase2_reference_agg_GBps": 143.599,
+      "phase2_reference_per_kernel_bytes": 917504,
+      "v1_shared_917504_agg_GBps": 135.512,
+      "v1_shared_917504_source": "sym_0 in the pre-v2 run (git history)",
+      "v2_shared_917504_agg_GBps": 148.24,
+      "gate_passed": true,
+      "note": "gate_passed is null if Phase 2 findings/CSV or this run's 917504 anchor row are missing -- treat as UNVERIFIED, not passed, until both are present."
+    },
+    "cells_not_plateaued": 11
   },
   "consumed": [
     "experiments/01_single_kernel_size/findings.json",

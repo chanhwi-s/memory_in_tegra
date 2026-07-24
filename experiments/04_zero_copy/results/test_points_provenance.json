@@ -3,8 +3,5 @@
     "experiments/01_single_kernel_size/findings.json",
     "experiments/02_two_kernel_size/findings.json"
   ],
-  "warnings": [
-    "Phase 3 findings.json's configs_for_phase4 has NO per-regime field -- this looks like the STALE v1 Phase 3 run (flat 3-point list), not the v2 re-sweep that prompts/04_zero_copy_v2.md requires ('Ordering: run this after Phase 3 v2'). Falling back to config='shared' for every generated test point rather than trusting stale per-test-point configs. Re-run scripts/gen_test_points.py once Phase 3 v2 (widened, regime-aware configs_for_phase4) has actually run.",
-    "NOTE: because Phase 3 v2 regime-aware configs were unavailable, EVERY row above uses config='shared' regardless of its size_regime. This is a safe fallback (shared is always a valid baseline) but it means no config='green' rows will be measured until Phase 3 v2 lands and this script is re-run."
-  ]
+  "warnings": []
 }

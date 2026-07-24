@@ -1,4 +1,12 @@
 test_point_id,l2_hit_rate_cached,l2_hit_rate_zc
+asym_00,NA,NA
+asym_02,NA,NA
+asym_03,NA,NA
+asym_04,NA,NA
+asym_05,NA,NA
+asym_06,NA,NA
 asym_2,NA,NA
 sym_0,NA,NA
 sym_1,NA,NA
+sym_ctx_large,NA,NA
+sym_ctx_small,NA,NA
