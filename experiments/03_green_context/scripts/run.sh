@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, run the Phase 3 sweep, and log the environment.
-# Intended to run on the Jetson AGX Orin device itself. Runnable from anywhere.
+# Build (if needed), lock clocks, run the Phase 3 sweep, plot, derive findings, and log
+# the environment -- a single end-to-end entry point (no separate plot.py /
+# derive_findings.py invocation needed). Intended to run on the Jetson AGX Orin device
+# itself. Runnable from anywhere. Needs pandas + matplotlib for the plot/findings steps.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,6 +32,12 @@ echo "Verifying SM partitioning took effect (8:8 split, prompt Verification sect
     || echo "WARNING: partition verification failed, see $PHASE_DIR/results/partition_verification.txt"
 cat "$PHASE_DIR/results/partition_verification.txt"
 
+echo "Generating plots..."
+python3 "$SCRIPT_DIR/plot.py"
+
+echo "Deriving findings.json / FINDINGS.md..."
+python3 "$SCRIPT_DIR/derive_findings.py"
+
 # ---- shared/env.md: written once (header), appended every run (never rewritten) ----
 ENV_MD="$REPO_ROOT/shared/env.md"
 if [ ! -f "$ENV_MD" ]; then
@@ -56,5 +64,8 @@ fi
     echo "- SoC temp (thermal_zone0): $(( $(cat /sys/devices/virtual/thermal/thermal_zone0/temp 2>/dev/null || echo 0) / 1000 )) C"
 } >> "$ENV_MD"
 
-echo "Done. Results: $PHASE_DIR/results/phase3_results.csv"
-echo "Env log appended: $ENV_MD"
+echo "Done."
+echo "  CSV:      $PHASE_DIR/results/phase3_results.csv"
+echo "  Plots:    $PHASE_DIR/results/plots/"
+echo "  Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
+echo "  Env log appended: $ENV_MD"

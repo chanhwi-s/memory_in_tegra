@@ -47,19 +47,23 @@ reviewed independently, per the prompt's "may implement... independently of Phas
 src/phase2_bench.cu       CUDA benchmark: concurrent K0/K1 measurement, correctness, CSV writer
 scripts/gen_config.py     reads Phase 1 findings/CSV -> results/phase2_config.csv (sweep plan)
 scripts/build.sh          nvcc build -> build/phase2_bench (gitignored)
-scripts/run.sh            build + gen_config + locks clocks + runs the sweep + appends shared/env.md
-scripts/plot.py           results/phase2_results.csv -> results/plots/*.png
-scripts/derive_findings.py  results/phase2_results.csv -> findings.json + FINDINGS.md
+scripts/run.sh            single entry point: build + gen_config + lock clocks + sweep + plot + derive findings + appends shared/env.md
+scripts/plot.py           results/phase2_results.csv -> results/plots/*.png (called by run.sh; standalone re-run also works)
+scripts/derive_findings.py  results/phase2_results.csv -> findings.json + FINDINGS.md (called by run.sh; standalone re-run also works)
 results/                  config CSV, results CSV, plots (committed)
 ```
 
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                       # build + gen_config + lock clocks + sweep -> results/phase2_results.csv
-python3 scripts/plot.py              # -> results/plots/sym_agg_vs_footprint.png, asym_vs_k1.png
-python3 scripts/derive_findings.py   # -> findings.json, FINDINGS.md
+scripts/run.sh   # build + gen_config + lock clocks + sweep + plot + derive findings, all in one step
 ```
+
+`run.sh` runs the full pipeline end to end: `results/phase2_results.csv`, `results/plots/
+sym_agg_vs_footprint.png` + `asym_vs_k1.png`, and `findings.json` + `FINDINGS.md` are all
+produced by this single command — no separate manual `plot.py` / `derive_findings.py` step
+needed. Re-run either script standalone only if you want to regenerate plots/findings from an
+already-existing CSV without re-running the sweep.
 
 All scripts resolve their own paths, so they can be invoked from any working directory.
 `gen_config.py` / `plot.py` / `derive_findings.py` need `pandas` + `matplotlib`.

@@ -36,11 +36,22 @@ results/                        CSV + plots (committed)
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                    # gen_test_points + build + lock clocks + sweep -> results/phase4_results.csv
-scripts/profile_l2.sh             # requires `ncu` on PATH -> results/l2_profile.csv (L2 bypass evidence)
-python3 scripts/plot.py           # -> results/plots/zc_vs_cached_reuse.png, zc_benefit_map.png
-python3 scripts/derive_findings.py  # merges l2_profile.csv into the CSV, -> findings.json, FINDINGS.md
+scripts/run.sh   # the only command you need — does everything below in order:
+                 #   gen_test_points -> build (if needed) -> lock clocks -> sweep
+                 #   -> results/phase4_results.csv -> profile_l2 (if `ncu` on PATH)
+                 #   -> plot.py -> derive_findings.py
+                 # -> results/phase4_results.csv, results/plots/*.png, findings.json, FINDINGS.md
 ```
+
+If `ncu` isn't on PATH when `run.sh` runs, it skips L2 profiling with a warning
+(`l2_hit_rate_*` columns and `l2_bypass_verified` stay `NA`/`false`) rather than failing —
+install Nsight Compute and re-run `scripts/profile_l2.sh` followed by
+`scripts/derive_findings.py` to fill those in afterward.
+
+Each step is also a standalone script if you need to re-run just one piece after editing
+something (e.g. re-plot after tweaking `plot.py`, or re-derive findings after a manual
+`l2_profile.csv` edit) — `scripts/gen_test_points.py`, `scripts/profile_l2.sh`,
+`python3 scripts/plot.py`, `python3 scripts/derive_findings.py`.
 
 All scripts resolve their own paths, so they can be invoked from any working directory.
 `plot.py` / `derive_findings.py` / `gen_test_points.py` / `parse_l2_profile.py` need

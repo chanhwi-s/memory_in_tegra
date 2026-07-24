@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, generate test points from upstream findings, run the
-# Phase 4 sweep, and log the environment. Intended to run on the Jetson AGX Orin device
-# itself. Runnable from anywhere.
+# One-shot Phase 4 pipeline: build (if needed), lock clocks, generate test points from
+# upstream findings, run the sweep, profile L2 (if `ncu` is available), plot, derive
+# findings, and log the environment. Intended to run on the Jetson AGX Orin device itself.
+# Runnable from anywhere. This is the only script you need to run by hand — everything
+# downstream (results/phase4_results.csv, results/plots/*.png, findings.json, FINDINGS.md)
+# is produced by this one invocation.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,7 +54,23 @@ fi
     echo "- SoC temp (thermal_zone0): $(( $(cat /sys/devices/virtual/thermal/thermal_zone0/temp 2>/dev/null || echo 0) / 1000 )) C"
 } >> "$ENV_MD"
 
-echo "Done. Results: $PHASE_DIR/results/phase4_results.csv"
-echo "Next: scripts/profile_l2.sh (L2 hit-rate verification), then scripts/plot.py and"
-echo "scripts/derive_findings.py."
 echo "Env log appended: $ENV_MD"
+
+echo "Profiling L2 hit rate (cached vs zerocopy)..."
+if command -v ncu >/dev/null 2>&1; then
+    "$SCRIPT_DIR/profile_l2.sh" || echo "WARNING: profile_l2.sh failed — continuing without L2 evidence (l2_hit_rate_* columns will stay NA)"
+else
+    echo "WARNING: ncu (Nsight Compute) not on PATH — skipping L2 profiling. l2_hit_rate_* columns" \
+         "and l2_bypass_verified will stay NA/false until you install ncu and re-run scripts/profile_l2.sh" \
+         "+ scripts/derive_findings.py."
+fi
+
+echo "Generating plots..."
+python3 "$SCRIPT_DIR/plot.py"
+
+echo "Deriving findings.json + FINDINGS.md..."
+python3 "$SCRIPT_DIR/derive_findings.py"
+
+echo "Done. Results: $PHASE_DIR/results/phase4_results.csv"
+echo "Plots: $PHASE_DIR/results/plots/"
+echo "Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"

@@ -25,10 +25,13 @@ results/                  CSV + plots (committed)
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                 # build + lock clocks + sweep -> results/phase1_results.csv
-python3 scripts/plot.py        # -> results/plots/bw_vs_footprint.png, saturation.png
-python3 scripts/derive_findings.py   # -> findings.json, FINDINGS.md
+scripts/run.sh   # the only command you need — build + lock clocks + sweep
+                 # -> results/phase1_results.csv -> plot.py -> derive_findings.py
+                 # -> results/plots/bw_vs_footprint.png, saturation.png, findings.json, FINDINGS.md
 ```
+
+Each step is also a standalone script if you need to re-run just one piece (e.g. re-plot
+after tweaking `plot.py`): `python3 scripts/plot.py`, `python3 scripts/derive_findings.py`.
 
 `run.sh` and `build.sh` resolve their own paths, so they can be invoked from any
 working directory. `plot.py` / `derive_findings.py` need `pandas` + `matplotlib`

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build (if needed), generate the sweep config from Phase 1's findings, lock clocks, run the
-# Phase 2 sweep, and log the environment. Intended to run on the Jetson AGX Orin device itself.
-# Runnable from anywhere.
+# Phase 2 sweep, plot, and derive findings. Intended to run on the Jetson AGX Orin device
+# itself. Runnable from anywhere. This is the single entry point -- no separate manual
+# plot.py / derive_findings.py invocation needed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,6 +25,12 @@ sudo jetson_clocks || echo "WARNING: jetson_clocks failed (not on Jetson, or no 
 
 echo "Running Phase 2 sweep..."
 "$BIN" --config "$PHASE_DIR/results/phase2_config.csv" --out "$PHASE_DIR/results/phase2_results.csv"
+
+echo "Generating plots (scripts/plot.py)..."
+python3 "$SCRIPT_DIR/plot.py"
+
+echo "Deriving findings (scripts/derive_findings.py)..."
+python3 "$SCRIPT_DIR/derive_findings.py"
 
 # ---- shared/env.md: written once (header), appended every run (never rewritten) ----
 ENV_MD="$REPO_ROOT/shared/env.md"
@@ -52,4 +59,6 @@ fi
 } >> "$ENV_MD"
 
 echo "Done. Results: $PHASE_DIR/results/phase2_results.csv"
+echo "Plots: $PHASE_DIR/results/plots/"
+echo "Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
 echo "Env log appended: $ENV_MD"

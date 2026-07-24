@@ -49,14 +49,19 @@ python3 scripts/sweep.py --dry-run
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                        # build + lock clocks + sweep -> results/phase3_results.csv
-                                       #   + results/partition_verification.txt
-python3 scripts/plot.py               # -> results/plots/green_vs_shared.png, partition_sweep.png
-python3 scripts/derive_findings.py    # -> findings.json, FINDINGS.md
+scripts/run.sh
 ```
 
+Single entry point: build (if needed) -> lock clocks -> `--check-api` -> sweep
+(`results/phase3_results.csv`) -> `--verify` (`results/partition_verification.txt`) -> plots
+(`results/plots/green_vs_shared.png`, `partition_sweep.png`) -> findings
+(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. No separate `plot.py` /
+`derive_findings.py` invocation needed.
+
 `run.sh`, `build.sh`, and `sweep.py` all resolve their own paths, so they can be invoked from
-any working directory. `plot.py` / `derive_findings.py` need `pandas` + `matplotlib`.
+any working directory. The plot/findings steps need `pandas` + `matplotlib`; run
+`scripts/plot.py` / `scripts/derive_findings.py` directly only if you want to regenerate just
+those from an existing `results/phase3_results.csv` without re-running the sweep.
 
 `scripts/run.sh` first runs `phase3_bench --check-api`, which reports whether the CUDA driver
 green-context API (CUDA >= 12.4) is actually available on this device — per the prompt: **"First

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, run the Phase 1 sweep, and log the environment.
-# Intended to run on the Jetson AGX Orin device itself. Runnable from anywhere.
+# One-shot Phase 1 pipeline: build (if needed), lock clocks, run the sweep, plot, derive
+# findings, and log the environment. Intended to run on the Jetson AGX Orin device itself.
+# Runnable from anywhere. This is the only script you need to run by hand — everything
+# downstream (results/phase1_results.csv, results/plots/*.png, findings.json, FINDINGS.md)
+# is produced by this one invocation.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,5 +50,14 @@ fi
     echo "- SoC temp (thermal_zone0): $(( $(cat /sys/devices/virtual/thermal/thermal_zone0/temp 2>/dev/null || echo 0) / 1000 )) C"
 } >> "$ENV_MD"
 
-echo "Done. Results: $PHASE_DIR/results/phase1_results.csv"
 echo "Env log appended: $ENV_MD"
+
+echo "Generating plots..."
+python3 "$SCRIPT_DIR/plot.py"
+
+echo "Deriving findings.json + FINDINGS.md..."
+python3 "$SCRIPT_DIR/derive_findings.py"
+
+echo "Done. Results: $PHASE_DIR/results/phase1_results.csv"
+echo "Plots: $PHASE_DIR/results/plots/"
+echo "Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
