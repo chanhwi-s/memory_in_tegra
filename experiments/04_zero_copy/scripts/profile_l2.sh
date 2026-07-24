@@ -8,6 +8,12 @@
 # this measures the intrinsic per-launch L2 behavior of the two allocation paths, which is
 # what config=green/shared and reuse_N do NOT change (zero-copy bypasses L2 on every launch
 # regardless of N; see README.md for the reasoning).
+#
+# v2: --profile-one reuses the block counts the main sweep's in-context saturation search
+# already found (results/chosen_blocks.csv), instead of re-running that search under ncu's
+# replay overhead. Run scripts/run.sh (the main sweep) at least once before this script so
+# chosen_blocks.csv exists -- otherwise phase4_bench falls back to unsaturated seed blocks
+# for the profiling launch only, with a stderr warning.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,6 +45,7 @@ tail -n +2 "$CFG" | cut -d',' -f1 | while IFS= read -r tpid; do
         echo "Profiling test_point=$tpid path=$path ..."
         ncu --metrics "$METRIC" --csv --page raw \
             "$BIN" --config "$CFG" --out /dev/null \
+            --chosen-blocks "$PHASE_DIR/results/chosen_blocks.csv" \
             --profile-one "$tpid" --profile-path "$path" --profile-reuse 1 --trials 1 \
             > "$RAW_DIR/${tpid}__${path}.csv" \
             || echo "WARNING: ncu run failed for $tpid/$path (see $RAW_DIR/${tpid}__${path}.csv)"

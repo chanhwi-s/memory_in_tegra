@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# One-shot Phase 4 pipeline: build (if needed), lock clocks, generate test points from
-# upstream findings, run the sweep, profile L2 (if `ncu` is available), plot, derive
-# findings, and log the environment. Intended to run on the Jetson AGX Orin device itself.
+# One-shot Phase 4 v2 pipeline: build (if needed), lock clocks, generate the widened test-
+# point sweep from upstream findings, run it (with in-context block saturation search per
+# prompts/04_zero_copy_v2.md), profile L2 (if `ncu` is available), plot, derive findings,
+# and log the environment. Intended to run on the Jetson AGX Orin device itself.
 # Runnable from anywhere. This is the only script you need to run by hand — everything
 # downstream (results/phase4_results.csv, results/plots/*.png, findings.json, FINDINGS.md)
-# is produced by this one invocation.
+# is produced by this one invocation. This run SUPERSEDES the first Phase 4 run in place.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,17 @@ if [ ! -x "$BIN" ]; then
     "$SCRIPT_DIR/build.sh"
 fi
 
+# ---- v2 Change 1 sanity gate needs the first run's numbers to compare against. Archive
+# the pre-v2 phase4_results.csv exactly once (never overwrite an existing archive, so
+# re-running run.sh repeatedly during v2 doesn't clobber the true v1 baseline with v2
+# numbers from a prior partial v2 run). ----
+BASELINE_CSV="$PHASE_DIR/results/phase4_results_v1_baseline.csv"
+CURRENT_CSV="$PHASE_DIR/results/phase4_results.csv"
+if [ -f "$CURRENT_CSV" ] && [ ! -f "$BASELINE_CSV" ]; then
+    cp "$CURRENT_CSV" "$BASELINE_CSV"
+    echo "Archived pre-v2 results to $BASELINE_CSV (for the Change-1 sanity gate)."
+fi
+
 echo "Locking power mode / clocks (00_conventions.md #4)..."
 sudo nvpmodel -m 0 || echo "WARNING: nvpmodel -m 0 failed (not on Jetson, or no sudo) — continuing"
 sudo jetson_clocks || echo "WARNING: jetson_clocks failed (not on Jetson, or no sudo) — continuing"
@@ -25,8 +37,9 @@ sudo jetson_clocks || echo "WARNING: jetson_clocks failed (not on Jetson, or no 
 echo "Generating test points from upstream findings.json (Phase 1/2/3)..."
 python3 "$SCRIPT_DIR/gen_test_points.py"
 
-echo "Running Phase 4 sweep..."
-"$BIN" --config "$PHASE_DIR/results/test_points_config.csv" --out "$PHASE_DIR/results/phase4_results.csv"
+echo "Running Phase 4 v2 sweep (widened size sweep + in-context block saturation search)..."
+"$BIN" --config "$PHASE_DIR/results/test_points_config.csv" --out "$PHASE_DIR/results/phase4_results.csv" \
+    --chosen-blocks "$PHASE_DIR/results/chosen_blocks.csv"
 
 # ---- shared/env.md: written once (header), appended every run (never rewritten) ----
 ENV_MD="$REPO_ROOT/shared/env.md"
