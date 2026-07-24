@@ -83,7 +83,22 @@ Phase-specific `results` keys are defined in that phase's prompt.
 - Report **plateau (saturated)** throughput: sweep block count until throughput flattens; block count is a knob, not a reported axis (unless a phase explicitly makes it one).
 - Achieved bandwidth = bytes moved / time; cache residency legitimately pushes it above DRAM peak — that is signal, not error.
 
-## 5. Scope guards
+## 5. Worklog — session handoff (mandatory)
+
+Independent Claude Code sessions do not share memory; the `worklog/` directory is the shared
+state. See `../worklog/README.md` for the format.
+
+- **At session start:** read the most recent `worklog/` entries (files sort chronologically) plus
+  `../OVERVIEW.md` and this file, so you know what is done / in-progress / blocked before acting.
+- **At session end:** create a **new** `worklog/YYYY-MM-DD-HHMM_<scope>.md` from `worklog/_TEMPLATE.md`.
+  Never edit another session's entry (append-only history). Record: what you did, files touched,
+  key decisions, findings produced (link the `findings.json`), blockers, and explicit next-steps.
+- Numbers go in `findings.json`; narrative state + handoff goes in the worklog. Use both.
+- **At session end, also print a suggested one-line git commit message in the chat** — English,
+  imperative mood, ≤ 72 chars, summarizing the session's change (e.g.
+  `Add Phase 1 A+B sweep harness and cache-tier plots`). Do not commit automatically; just recommend it.
+
+## 6. Scope guards
 
 - Do only what the current phase's prompt specifies. Do not pre-implement future phases
   (e.g. no zero copy in Phase 1, no green context before Phase 3).

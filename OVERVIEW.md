@@ -96,6 +96,10 @@ memoryintegra/
       src/ scripts/ results/ README.md
       FINDINGS.md             # human-readable distilled results
       findings.json           # machine-readable handoff for later phases
+  worklog/                    # one markdown entry per Claude Code session (cross-session handoff)
+    README.md                 # worklog format + rules
+    _TEMPLATE.md              # copy this to start a new entry
+    YYYY-MM-DD-HHMM_scope.md  # session entries, sorted chronologically
   shared/
     env.md                    # environment log (hardware, CUDA/driver, clocks) — written once, referenced by all
 ```
