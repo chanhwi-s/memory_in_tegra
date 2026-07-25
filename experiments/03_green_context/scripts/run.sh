@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, run the Phase 3 v3 REUSE=1 sweep, plot, derive
-# findings, and log the environment -- a single end-to-end entry point (no separate
-# plot.py / derive_findings.py invocation needed). Intended to run on the Jetson AGX
-# Orin device itself. Runnable from anywhere. Needs pandas + matplotlib for the
-# plot/findings steps.
+# Build (if needed), lock clocks, run the Phase 3 v3 sweep END TO END -- reuse=1 main
+# sweep, the reuse_N overlay, plots, findings -- and log the environment. Single entry
+# point, no separate plot.py / derive_findings.py / sweep_reuse.py invocation needed.
+# Intended to run on the Jetson AGX Orin device itself. Runnable from anywhere. Needs
+# pandas + matplotlib for the plot/findings steps.
 #
 # v2 (prompts/03_green_context_v2.md): the sweep is a widened per-kernel size sweep
 # instead of 3 fixed points, and EACH cell runs an in-context block-count saturation
@@ -11,12 +11,20 @@
 # noticeably longer than the original Phase 3 run.
 # v3 (prompts/03_green_context_v3.md): the size grid is now Phase 2's own grid (+ a
 # small-end extension), so this script's output is directly x-axis-comparable to
-# Phase 2's. This script covers the reuse=1 sweep ONLY; the separate, optional
-# reuse_N overlay (Change 3) is scripts/sweep_reuse.py -- run it manually AFTER this
-# script (it reads back this run's results/phase3_results.csv), then re-run
-# scripts/plot.py to add reuse_green_vs_shared.png. See scripts/sweep.py --dry-run
-# to preview cell count before running for real.
+# Phase 2's. This script now ALSO runs the reuse_N overlay (Change 3,
+# scripts/sweep_reuse.py) right after the main sweep, then plots both. Pass
+# --skip-reuse to run the reuse=1 main sweep only (the overlay is diagnostic-only and
+# adds ~48 extra measurements; see scripts/sweep.py / scripts/sweep_reuse.py --dry-run
+# to preview cell counts before running for real).
 set -euo pipefail
+
+RUN_REUSE_OVERLAY=1
+for arg in "$@"; do
+    case "$arg" in
+        --skip-reuse) RUN_REUSE_OVERLAY=0 ;;
+        *) echo "Unknown arg: $arg (supported: --skip-reuse)" >&2; exit 2 ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASE_DIR="$(dirname "$SCRIPT_DIR")"
@@ -46,6 +54,14 @@ echo "Verifying SM partitioning took effect (8:8 split, prompt Verification sect
     > "$PHASE_DIR/results/partition_verification.txt" 2>&1 \
     || echo "WARNING: partition verification failed, see $PHASE_DIR/results/partition_verification.txt"
 cat "$PHASE_DIR/results/partition_verification.txt"
+
+if [ "$RUN_REUSE_OVERLAY" -eq 1 ]; then
+    echo "Running Phase 3 reuse_N overlay (v3 Change 3; pass --skip-reuse to skip this)..."
+    python3 "$SCRIPT_DIR/sweep_reuse.py" \
+        || echo "WARNING: sweep_reuse.py failed -- reuse overlay is diagnostic-only, continuing without it (results/findings above are unaffected)"
+else
+    echo "Skipping reuse_N overlay (--skip-reuse)."
+fi
 
 echo "Generating plots..."
 python3 "$SCRIPT_DIR/plot.py"
@@ -80,11 +96,10 @@ fi
 } >> "$ENV_MD"
 
 echo "Done."
-echo "  CSV:      $PHASE_DIR/results/phase3_results.csv"
-echo "  Plots:    $PHASE_DIR/results/plots/"
-echo "  Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
+echo "  CSV:           $PHASE_DIR/results/phase3_results.csv"
+if [ "$RUN_REUSE_OVERLAY" -eq 1 ]; then
+    echo "  Reuse CSV:     $PHASE_DIR/results/phase3_reuse_results.csv (diagnostic-only; see --skip-reuse)"
+fi
+echo "  Plots:         $PHASE_DIR/results/plots/"
+echo "  Findings:      $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
 echo "  Env log appended: $ENV_MD"
-echo ""
-echo "Optional (v3 Change 3): run scripts/sweep_reuse.py then scripts/plot.py again"
-echo "to add the reuse_N overlay (reuse_green_vs_shared.png) -- diagnostic only,"
-echo "does not change the results/findings above."

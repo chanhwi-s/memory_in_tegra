@@ -2,9 +2,13 @@
 # v2 add-on (prompts/02_two_kernel_size_v2.md): build (if needed), lock clocks, run the
 # reuse-sweep overlay (--reuse-out), plot it, and append the "Reuse overlay" FINDINGS.md
 # section. Purely additive -- this script never touches phase2_config.csv generation,
-# phase2_results.csv, findings.json, or scripts/run.sh's own output; it only reads the
-# already-committed results/phase2_config.csv (same cells as the reuse=1 sweep) and writes
+# phase2_results.csv, or findings.json; it only reads the already-committed
+# results/phase2_config.csv (same cells as the reuse=1 sweep) and writes
 # results/phase2_reuse_results.csv + results/plots/reuse_bw_vs_footprint.png.
+#
+# NOTE: scripts/run.sh now runs this same sequence automatically at the end of the main
+# sweep. Use this script standalone only when you want to re-run *just* the reuse overlay
+# (e.g. after editing plot_reuse.py) without re-running the full main sweep.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

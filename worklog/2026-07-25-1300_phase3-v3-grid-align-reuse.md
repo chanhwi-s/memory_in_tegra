@@ -71,9 +71,16 @@ committed state rather than a manually-taken snapshot).
   Verification below). The reuse-overlay summary computes, per subset size, the green-vs-
   shared delta at `reuse_N=1` vs the max `reuse_N` present and classifies it as improving /
   crossing-into-helping / flat.
-- **`scripts/run.sh`:** comment-only update describing the v3 grid + pointing at
-  `sweep_reuse.py` as a manual, optional follow-up step; no functional change (still runs the
-  reuse=1 sweep only).
+- **`scripts/run.sh`:** initially a comment-only update pointing at `sweep_reuse.py` as a
+  manual, optional follow-up step. **User then asked for `run.sh` to run everything added in
+  this patch by default** (기존처럼 run.sh하면 추가된거 다 돌아가게 해줘), so wired
+  `sweep_reuse.py` directly into the pipeline (after `--verify`, before `plot.py`, so the
+  reuse plot has data by the time `plot.py` runs) and added a `--skip-reuse` opt-out flag
+  (bash `case` arg parsing) for anyone who wants the faster reuse=1-only run. The
+  `sweep_reuse.py` call is best-effort (`|| echo WARNING ... continuing`, matching the
+  existing `nvpmodel`/`jetson_clocks`/`--check-api`/`--verify` pattern in this script) since
+  it's diagnostic-only and must never block the mandatory reuse=1 results/findings. Verified
+  with `bash -n` (no CUDA device to actually run it here).
 - **`README.md`:** rewritten for v3 — updated Status section to correctly state that v2's
   committed `results/`/`findings.json` are REAL on-device measurements (not v1 placeholders,
   which was the correct-at-the-time statement in the v2 README before the real run landed),
@@ -115,7 +122,8 @@ committed state rather than a manually-taken snapshot).
 - `experiments/03_green_context/scripts/sweep_reuse.py` -- new, reuse overlay driver (Change 3).
 - `experiments/03_green_context/scripts/derive_findings.py` -- grid-alignment + reuse-overlay
   FINDINGS.md sections (schema-preserving).
-- `experiments/03_green_context/scripts/run.sh` -- comment-only.
+- `experiments/03_green_context/scripts/run.sh` -- comments + wired `sweep_reuse.py` into the
+  default pipeline with a `--skip-reuse` opt-out (see Key decisions).
 - `experiments/03_green_context/README.md` -- rewritten for v3.
 - `experiments/03_green_context/results/`, `findings.json`, `FINDINGS.md` -- **untouched**
   (still the real v2 on-device measurements; see Status below).
@@ -189,10 +197,11 @@ committed state rather than a manually-taken snapshot).
 2. `python3 scripts/sweep.py --dry-run` to re-confirm the 149-cell plan on real upstream
    findings.json (should match this session's off-device dry-run exactly, since nothing about
    Phase 1/2's findings.json changed).
-3. `scripts/run.sh` for the reuse=1 main sweep (v3 grid). Check
-   `findings.json`'s `results.block_saturation_sanity_gate.gate_passed` first, same as v2.
-4. `python3 scripts/sweep_reuse.py` (optional but recommended, given this is the whole point
-   of Change 3) then `python3 scripts/plot.py` again to add `reuse_green_vs_shared.png`.
+3. `scripts/run.sh` -- now runs the reuse=1 main sweep AND the reuse_N overlay by default
+   (pass `--skip-reuse` for the reuse=1-only, faster run). Check `findings.json`'s
+   `results.block_saturation_sanity_gate.gate_passed` first, same as v2; the reuse overlay
+   step is best-effort (warns and continues on failure without affecting the reuse=1
+   results/findings), so check its stderr output for the stability-check NOTE too.
 5. Read the regenerated `FINDINGS.md`'s new "Grid alignment with Phase 2" (should just confirm
    supersession) and "Reuse overlay" sections -- the latter is the interesting new result:
    does green's delta actually improve/cross into positive at higher `reuse_N` for the

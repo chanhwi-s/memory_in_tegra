@@ -73,28 +73,25 @@ stable at a second N (checkN=4, holding the element-wise max if unstable, with a
 stderr), then held fixed across all six reuse_N values per cell -- so the added cost is ~6x a
 single reuse=1 run, not 6x a fresh search per N.
 
-Run it with:
-```bash
-scripts/run_reuse_overlay.sh
-```
-This assumes `results/phase2_config.csv` already exists (produced by the main `scripts/run.sh` /
-`gen_config.py`); it will generate it if missing but does not re-run the main sweep.
-`scripts/derive_findings.py` fully rewrites `FINDINGS.md` from `phase2_results.csv`, which would
-silently drop the appended "Reuse overlay" section -- always run
-`scripts/append_reuse_findings.py` *after* `derive_findings.py` if you re-run both by hand
-(`run_reuse_overlay.sh` already does this in the right order).
+**`scripts/run.sh` now runs this add-on automatically** as the last step of the main pipeline
+(after `derive_findings.py`, since that script rewrites `FINDINGS.md` from scratch and would
+otherwise drop the appended "Reuse overlay" section). Use `scripts/run_reuse_overlay.sh`
+standalone only if you want to re-run *just* the reuse overlay (e.g. after editing
+`plot_reuse.py`) without re-running the full main sweep.
 
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh   # build + gen_config + lock clocks + sweep + plot + derive findings, all in one step
+scripts/run.sh   # build + gen_config + lock clocks + sweep + plot + derive findings + reuse overlay, all in one step
 ```
 
-`run.sh` runs the full pipeline end to end: `results/phase2_results.csv`, `results/plots/
-sym_agg_vs_footprint.png` + `asym_vs_k1.png`, and `findings.json` + `FINDINGS.md` are all
-produced by this single command — no separate manual `plot.py` / `derive_findings.py` step
-needed. Re-run either script standalone only if you want to regenerate plots/findings from an
-already-existing CSV without re-running the sweep.
+`run.sh` runs the full pipeline end to end: `results/phase2_results.csv` +
+`results/phase2_reuse_results.csv`, `results/plots/sym_agg_vs_footprint.png` +
+`asym_vs_k1.png` + `reuse_bw_vs_footprint.png`, and `findings.json` + `FINDINGS.md` (including
+its "Reuse overlay" section) are all produced by this single command — no separate manual
+`plot.py` / `derive_findings.py` / `plot_reuse.py` / `append_reuse_findings.py` step needed.
+Re-run any of those scripts standalone only if you want to regenerate a subset of
+plots/findings from already-existing CSVs without re-running the sweep(s).
 
 All scripts resolve their own paths, so they can be invoked from any working directory.
 `gen_config.py` / `plot.py` / `derive_findings.py` need `pandas` + `matplotlib`.

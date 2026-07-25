@@ -70,9 +70,11 @@ scripts/sweep.py        outer driver for the reuse=1 main sweep: imports Phase 2
 scripts/sweep_reuse.py  (v3 Change 3, new) reuse_N overlay driver: reads back reuse=1 blocks/
                         splits from results/phase3_results.csv, verifies block-count stability
                         at one check N, measures the subset x reuse_N grid, writes the
-                        SEPARATE results/phase3_reuse_results.csv. Run manually AFTER sweep.py.
-scripts/run.sh          locks clocks, runs sweep.py (reuse=1 only), runs partition
-                        verification, appends shared/env.md
+                        SEPARATE results/phase3_reuse_results.csv. Called automatically by
+                        run.sh right after sweep.py (pass run.sh --skip-reuse to skip it).
+scripts/run.sh          single entry point: locks clocks, runs sweep.py (reuse=1), partition
+                        verification, sweep_reuse.py (reuse_N overlay, best-effort), plot.py,
+                        derive_findings.py, appends shared/env.md
 scripts/plot.py         results/phase3_results.csv -> results/plots/*.png (green_vs_shared,
                         partition_sweep, delta_vs_size); ALSO reads the optional
                         results/phase3_reuse_results.csv -> reuse_green_vs_shared.png if
@@ -121,21 +123,23 @@ shown labeled `UNVERIFIED`.
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                 # reuse=1 main sweep (mandatory)
-scripts/sweep_reuse.py         # reuse_N overlay (optional, additive, run after the above)
-scripts/plot.py                # re-run to pick up reuse_green_vs_shared.png
+scripts/run.sh                 # everything: reuse=1 sweep + reuse_N overlay + plots + findings
+scripts/run.sh --skip-reuse    # reuse=1 sweep only (skips the ~48-cell reuse_N overlay)
 ```
 
-`scripts/run.sh` is the single entry point for the reuse=1 sweep: build (if needed) -> lock
-clocks -> `--check-api` -> sweep (`results/phase3_results.csv`) -> `--verify`
-(`results/partition_verification.txt`) -> plots (`results/plots/green_vs_shared.png`,
-`partition_sweep.png`, `delta_vs_size.png`) -> findings (`findings.json`, `FINDINGS.md`) ->
-append `shared/env.md`.
+`scripts/run.sh` is the single entry point: build (if needed) -> lock clocks -> `--check-api`
+-> sweep (`results/phase3_results.csv`) -> `--verify` (`results/partition_verification.txt`)
+-> **reuse_N overlay** (`scripts/sweep_reuse.py` -> `results/phase3_reuse_results.csv`;
+best-effort -- a failure here only warns and continues, since it's diagnostic-only and must
+not block the reuse=1 results) -> plots (`results/plots/green_vs_shared.png`,
+`partition_sweep.png`, `delta_vs_size.png`, `reuse_green_vs_shared.png`) -> findings
+(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. Pass `--skip-reuse` to run the
+mandatory reuse=1 sweep only.
 
 All scripts resolve their own paths, so they can be invoked from any working directory. The
 plot/findings steps need `pandas` + `matplotlib`; run `scripts/plot.py` /
-`scripts/derive_findings.py` directly only if you want to regenerate just those from an
-existing CSV without re-running the sweep.
+`scripts/derive_findings.py` / `scripts/sweep_reuse.py` directly only if you want to
+regenerate just one step from existing CSVs without re-running the rest.
 
 **This run is noticeably slower than the original Phase 3 run**: the widened/aligned sweep
 alone is ~5x more test points, and every cell runs an in-context block-count search (2 axes x
