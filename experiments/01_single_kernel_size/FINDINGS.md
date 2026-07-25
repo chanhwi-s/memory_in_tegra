@@ -1,6 +1,6 @@
 # Phase 1 Findings — Single-Kernel Memory-Hierarchy Characterization
 
-Generated 2026-07-25T02:17:49Z from `experiments/01_single_kernel_size/results/phase1_results.csv`. All numbers below
+Generated 2026-07-25T02:21:49Z from `experiments/01_single_kernel_size/results/phase1_results.csv`. All numbers below
 are computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not
 hand-edit) if the CSV is regenerated.
 
@@ -9,7 +9,7 @@ hand-edit) if the CSV is regenerated.
 - **L2-resident** up to read-footprint **1,048,576 bytes** (~1.00 MB)
 - **L2+SLC-served** up to read-footprint **2,097,152 bytes** (~2.00 MB)
 - **DRAM-bound** from read-footprint **4,194,304 bytes** (~4.00 MB) onward
-- **Measured DRAM peak:** 177.9 GB/s
+- **Measured DRAM peak:** 178.3 GB/s
 
 ## Reuse crossover
 
@@ -19,10 +19,10 @@ Reuse stops lifting achieved BW above DRAM peak once read_footprint_bytes >= 419
 
 - 32,768 bytes/buffer -> 64 blocks
 - 65,536 bytes/buffer -> 32 blocks
-- 131,072 bytes/buffer -> 64 blocks
+- 131,072 bytes/buffer -> 32 blocks
 - 262,144 bytes/buffer -> 64 blocks
 - 524,288 bytes/buffer -> 64 blocks
-- 1,048,576 bytes/buffer -> 256 blocks
+- 1,048,576 bytes/buffer -> 64 blocks
 - 2,097,152 bytes/buffer -> 256 blocks
 - 3,145,728 bytes/buffer -> 256 blocks
 - 4,194,304 bytes/buffer -> 256 blocks
@@ -36,7 +36,7 @@ Reuse stops lifting achieved BW above DRAM peak once read_footprint_bytes >= 419
 
 ## Threads-per-block check
 
-256 threads/block confirmed near-optimal at the mid-size check (values: {128: 152.557, 256: 206.521, 512: 166.688})
+256 threads/block confirmed near-optimal at the mid-size check (values: {128: 152.973, 256: 266.046, 512: 165.879})
 
 ## Compute-bound crossover observed?
 

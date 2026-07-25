@@ -1,10 +1,10 @@
 # Phase 4 v2 Findings -- Zero Copy + Reuse Crossover (widened sweep, re-saturated blocks)
 
-Generated 2026-07-25T02:18:55Z from `experiments/04_zero_copy/results/phase4_results.csv`. All numbers below are computed directly from that CSV (and `results/l2_profile.csv` if present) by `scripts/derive_findings.py` -- re-run it (do not hand-edit) if either CSV changes. This run **supersedes** the first Phase 4 run per `prompts/04_zero_copy_v2.md`.
+Generated 2026-07-25T02:23:05Z from `experiments/04_zero_copy/results/phase4_results.csv`. All numbers below are computed directly from that CSV (and `results/l2_profile.csv` if present) by `scripts/derive_findings.py` -- re-run it (do not hand-edit) if either CSV changes. This run **supersedes** the first Phase 4 run per `prompts/04_zero_copy_v2.md`.
 
 ## Headline
 
-Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 1.50MB-1.50MB range, peaking at asym_00 (l1 regime): +11.0% at reuse N=1, crossing over around reuse N=>32. Beyond that (2.00MB-24.62MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses).
+Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 2.62MB-2.62MB range, peaking at asym_02 (dram regime): +2.2% at reuse N=1, crossing over around reuse N=2. Beyond that (1.50MB-24.62MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses).
 
 ## Sanity gate (Change 1: block saturation must not regress vs the first run)
 
@@ -12,31 +12,31 @@ SANITY GATE FAILED -- re-swept cached aggregate is LOWER than v1 at one or more 
 
 | test_point_id | config | reuse_N | v1 cached GB/s | v2 cached GB/s | status |
 |---|---|---|---|---|---|
-| asym_2 | shared | 1 | 122.8 | 131.4 | pass |
-| asym_2 | shared | 2 | 146.3 | 144.1 | FAIL |
-| asym_2 | shared | 4 | 161.8 | 156.5 | FAIL |
-| asym_2 | shared | 8 | 175.0 | 170.1 | FAIL |
-| asym_2 | shared | 16 | 183.2 | 175.6 | FAIL |
-| asym_2 | shared | 32 | 187.8 | 178.5 | FAIL |
+| asym_2 | shared | 1 | 122.8 | 136.5 | pass |
+| asym_2 | shared | 2 | 146.3 | 152.5 | pass |
+| asym_2 | shared | 4 | 161.8 | 163.4 | pass |
+| asym_2 | shared | 8 | 175.0 | 172.7 | FAIL |
+| asym_2 | shared | 16 | 183.2 | 178.9 | FAIL |
+| asym_2 | shared | 32 | 187.8 | 181.8 | FAIL |
 | sym_0 | shared | - | - | - | no v1 baseline match (no v1 baseline row at this exact (config, k0_bytes, k1_bytes) -- likely because v1's gen_test_points.py resolved this label to a different size (see FINDINGS.md discrepancy note).) |
-| sym_1 | shared | 1 | 84.3 | 95.8 | pass |
-| sym_1 | shared | 2 | 128.1 | 121.0 | FAIL |
-| sym_1 | shared | 4 | 171.2 | 160.9 | FAIL |
-| sym_1 | shared | 8 | 198.0 | 170.8 | FAIL |
-| sym_1 | shared | 16 | 217.8 | 186.7 | FAIL |
-| sym_1 | shared | 32 | 231.0 | 195.1 | FAIL |
+| sym_1 | shared | 1 | 84.3 | 99.6 | pass |
+| sym_1 | shared | 2 | 128.1 | 132.5 | pass |
+| sym_1 | shared | 4 | 171.2 | 151.8 | FAIL |
+| sym_1 | shared | 8 | 198.0 | 175.4 | FAIL |
+| sym_1 | shared | 16 | 217.8 | 191.8 | FAIL |
+| sym_1 | shared | 32 | 231.0 | 203.8 | FAIL |
 
 ## Asymmetric large-kernel (K1) sweep -- the headline story
 
 | test_point_id | regime | k1_bytes | zc delta @ N=1 | crossover N | bound conclusion | plateau reached | L2 bypass verified |
 |---|---|---|---|---|---|---|---|
-| asym_00 | l1 | 1.50MB | +11.0% | none in 1..32 | memory-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_2 | dram | 2.00MB | -10.0% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_02 | dram | 2.62MB | +0.6% | 4 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_03 | dram | 4.59MB | -1.3% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_04 | dram | 8.04MB | -0.1% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_05 | dram | 14.07MB | -0.8% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_06 | dram | 24.62MB | -0.2% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_00 | l1 | 1.50MB | -2.1% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_2 | dram | 2.00MB | -9.7% | 4 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_02 | dram | 2.62MB | +2.2% | 2 | memory-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_03 | dram | 4.59MB | +0.4% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_04 | dram | 8.04MB | -0.0% | 4 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_05 | dram | 14.07MB | -0.5% | 8 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_06 | dram | 24.62MB | -3.3% | none in 1..32 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
 
 ## Symmetric anchors (secondary -- NOT the large-kernel story, kept for continuity)
 
@@ -44,10 +44,10 @@ Both kernels are the same size here, so this is a contention point, not a large/
 
 | test_point_id | k_bytes | zc delta @ N=1 | crossover N | bound conclusion |
 |---|---|---|---|---|
-| sym_0 | 768KB | +10.8% | 32 | memory-bound |
-| sym_1 | 896KB | +24.4% | none in 1..32 | memory-bound |
-| sym_ctx_large | 24.62MB | -0.1% | 2 | compute-bound |
-| sym_ctx_small | 1.50MB | +8.1% | 2 | memory-bound |
+| sym_0 | 768KB | +6.0% | 2 | memory-bound |
+| sym_1 | 896KB | +24.0% | none in 1..32 | memory-bound |
+| sym_ctx_large | 24.62MB | +1.4% | none in 1..32 | dram-bound-throughout |
+| sym_ctx_small | 1.50MB | -0.3% | none in 1..32 | dram-bound-throughout |
 
 ## Discrepancy vs first Phase 4 run
 
