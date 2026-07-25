@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate Phase 3 v2 plots from results/phase3_results.csv. Runnable from anywhere.
+"""Generate Phase 3 v3 plots from results/phase3_results.csv (+ the optional
+reuse overlay CSV). Runnable from anywhere.
 
 v2 changes vs the original plot.py (prompts/03_green_context_v2.md "Metrics / CSV / plots"):
   - green_vs_shared.png is now a function of per-kernel size (the widened sweep),
@@ -9,20 +10,53 @@ v2 changes vs the original plot.py (prompts/03_green_context_v2.md "Metrics / CS
     of a single "onset" point.
   - delta_vs_size.png is new: green's aggregate-throughput delta (%) vs shared,
     plotted against per-kernel size, with the zero line marked.
+
+v3 changes (prompts/03_green_context_v3.md):
+  - Change 2: every size x-axis (green_vs_shared.png, delta_vs_size.png) is now
+    log BASE 2 with power-of-two tick labels (256K, 512K, 1M, ...) instead of
+    matplotlib's default log10 -- these are byte sizes, base-2 is the natural
+    axis. partition_sweep.png's x-axis is untouched (it's the categorical SM
+    split, e.g. "8:8", not a size).
+  - Change 3: new plot_reuse_overlay() -> results/plots/reuse_green_vs_shared.png,
+    read from the SEPARATE results/phase3_reuse_results.csv (written by
+    scripts/sweep_reuse.py). Purely additive: if that CSV doesn't exist yet
+    (the reuse overlay hasn't been run), this step is skipped with a note --
+    it never blocks the reuse=1 plots above.
 """
+import json
 import os
 import sys
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PHASE_DIR = os.path.dirname(SCRIPT_DIR)
+REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
 CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
+REUSE_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse_results.csv")
 PLOTS_DIR = os.path.join(PHASE_DIR, "results", "plots")
+PHASE1_FINDINGS = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size", "findings.json")
+
+
+def _fmt_bytes(x, _pos):
+    for unit, div in (("M", 1024 * 1024), ("K", 1024)):
+        if x >= div:
+            v = x / div
+            return f"{v:.0f}{unit}" if v == int(v) else f"{v:.2f}{unit}"
+    return f"{int(x)}"
+
+
+def _set_log2_bytes_axis(ax):
+    """v3 Change 2: power-of-2 x-axis for byte-size axes (not the categorical
+    SM-split axis in partition_sweep.png)."""
+    ax.set_xscale("log", base=2)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(_fmt_bytes))
+    ax.xaxis.set_minor_formatter(mticker.NullFormatter())
 
 
 def load():
@@ -76,10 +110,10 @@ def plot_green_vs_shared(df):
                        color="black", zorder=5, label="Phase 2 anchor")
             ax.scatter(anchors["size"], anchors["best_green_agg_GBps"], marker="*", s=200,
                        color="black", zorder=5)
-        ax.set_xscale("log")
-        xlabel = "per-kernel size (bytes, log)" if mode == "symmetric" else "K1 size (bytes, log; K0 fixed 1 MB)"
+        _set_log2_bytes_axis(ax)
+        xlabel = "per-kernel size (bytes, log2)" if mode == "symmetric" else "K1 size (bytes, log2; K0 fixed 1 MB)"
         ax.set_xlabel(xlabel)
-        ax.set_title(f"Phase 3 v2: {mode}")
+        ax.set_title(f"Phase 3 v3: {mode}")
         ax.grid(True, alpha=0.3)
         ax.legend()
     axes[0].set_ylabel("Aggregate achieved bandwidth (GB/s)")
@@ -96,7 +130,7 @@ def _pick_contrast_points(df):
     regimes side by side (prompt: "at a small-size point AND at the roofline
     point"). The roofline anchor is the LARGEST-size symmetric anchor (Phase 2's
     contention-onset point, 917504 B, is bigger than its ninety_pct point,
-    786432 B) -- v2 anchor ids are `sym_anchor_<i>_<bytes>`, not name-tagged
+    786432 B) -- anchor ids are `sym_anchor_<bytes>`, not name-tagged
     "onset", so size order is how we pick it."""
     sym = df[df["mode"] == "symmetric"].copy()
     if sym.empty:
@@ -150,7 +184,7 @@ def plot_partition_sweep(df):
         axes[1].set_title(f"Roofline anchor: {roofline_tp}")
     else:
         axes[1].set_title("(no roofline anchor)")
-    fig.suptitle("Phase 3 v2: throughput vs SM partition ratio -- small vs roofline regime")
+    fig.suptitle("Phase 3 v3: throughput vs SM partition ratio -- small vs roofline regime")
     fig.tight_layout()
     out = os.path.join(PLOTS_DIR, "partition_sweep.png")
     fig.savefig(out, dpi=150)
@@ -172,14 +206,68 @@ def plot_delta_vs_size(df):
             ax.scatter(anchors["size"], anchors["delta_pct"], marker="*", s=200,
                        color="black", zorder=5)
     ax.axhline(0, color="gray", linestyle="--", linewidth=1, label="shared baseline (0%)")
-    ax.set_xscale("log")
-    ax.set_xlabel("swept per-kernel size (bytes, log; symmetric=per-kernel, asymmetric=K1)")
+    _set_log2_bytes_axis(ax)
+    ax.set_xlabel("swept per-kernel size (bytes, log2; symmetric=per-kernel, asymmetric=K1)")
     ax.set_ylabel("best-green delta vs shared (%)")
-    ax.set_title("Phase 3 v2: green-context delta vs shared across the size sweep")
+    ax.set_title("Phase 3 v3: green-context delta vs shared across the size sweep")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
     out = os.path.join(PLOTS_DIR, "delta_vs_size.png")
+    fig.savefig(out, dpi=150)
+    print(f"wrote {out}")
+
+
+def _load_dram_peak_GBps():
+    if not os.path.exists(PHASE1_FINDINGS):
+        return None
+    with open(PHASE1_FINDINGS) as f:
+        d = json.load(f)
+    return d.get("results", {}).get("measured_dram_peak_GBps")
+
+
+def plot_reuse_overlay():
+    """v3 Change 3: one panel per reuse-overlay subset size, aggregate GB/s vs
+    reuse_N (log base 2), shared vs best-green, DRAM-peak reference line.
+    Purely additive -- skips cleanly if the overlay CSV hasn't been generated
+    yet (scripts/sweep_reuse.py), never blocks the reuse=1 plots above."""
+    if not os.path.exists(REUSE_CSV_PATH):
+        print(f"NOTE: {REUSE_CSV_PATH} not found -- skipping reuse_green_vs_shared.png "
+              f"(run scripts/sweep_reuse.py to generate the reuse overlay; this does not "
+              f"affect the reuse=1 plots above).", file=sys.stderr)
+        return
+
+    df = pd.read_csv(REUSE_CSV_PATH)
+    dram_peak = _load_dram_peak_GBps()
+
+    tp_size = df.groupby("test_point_id").k0_bytes.first().sort_values()
+    test_points = list(tp_size.index)
+    n = max(len(test_points), 1)
+
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5), squeeze=False)
+    axes = axes[0]
+    for ax, tp in zip(axes, test_points):
+        sub = df[df.test_point_id == tp]
+        for config, marker in (("shared", "o"), ("green", "s")):
+            csub = sub[sub.config == config].sort_values("reuse_N")
+            if csub.empty:
+                continue
+            ax.plot(csub.reuse_N, csub.agg_GBps_median, marker=marker, label=config)
+        if dram_peak:
+            ax.axhline(dram_peak, color="gray", linestyle=":", linewidth=1,
+                       label=f"DRAM peak ({dram_peak:.1f} GB/s)")
+        ax.set_xscale("log", base=2)
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _pos: f"{int(round(x))}"))
+        ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+        ax.set_xlabel(f"reuse_N (log2) -- {tp} ({_fmt_bytes(int(tp_size[tp]), None)}/kernel)")
+        ax.set_ylabel("Aggregate achieved bandwidth (GB/s)")
+        ax.set_title(tp)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+    fig.suptitle("Phase 3 v3 reuse overlay: aggregate GB/s vs reuse_N, shared vs best-green "
+                 "(blocks held fixed across N)")
+    fig.tight_layout()
+    out = os.path.join(PLOTS_DIR, "reuse_green_vs_shared.png")
     fig.savefig(out, dpi=150)
     print(f"wrote {out}")
 
@@ -190,6 +278,7 @@ def main():
     plot_green_vs_shared(df)
     plot_partition_sweep(df)
     plot_delta_vs_size(df)
+    plot_reuse_overlay()
 
 
 if __name__ == "__main__":

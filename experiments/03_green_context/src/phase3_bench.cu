@@ -1,16 +1,30 @@
-// Phase 3 v2 — green context (SM partitioning) on the two-kernel roofline,
-// with IN-CONTEXT block-count saturation search and a widened size sweep
-// (see prompts/03_green_context_v2.md). Measures ONE cell per invocation
-// (test point x config x sm split); the outer sweep over test points /
-// partition ratios / sizes lives in scripts/sweep.py, which reads Phase 1/2
-// findings.json at run time (00_conventions.md: never fabricate numbers).
+// Phase 3 v3 — green context (SM partitioning) on the two-kernel roofline,
+// with IN-CONTEXT block-count saturation search, a size sweep aligned to
+// Phase 2's own grid, and an optional reuse_N overlay (see
+// prompts/03_green_context_v3.md, building on _v2.md). Measures ONE cell per
+// invocation (test point x config x sm split [x reuse_N]); the outer sweep
+// lives in scripts/sweep.py (reuse=1 main sweep) and scripts/sweep_reuse.py
+// (reuse overlay), which read Phase 1/2 findings.json at run time
+// (00_conventions.md: never fabricate numbers).
 //
 // Build: nvcc -O3 -arch=sm_87 -o phase3_bench phase3_bench.cu -lcuda
 //
 // Modes:
 //   (default)          saturate blocks_k0/blocks_k1 in context for this cell
 //                       (see "in-context block saturation search" below), then
-//                       measure and print one CSV row (no header) to stdout
+//                       measure and print one CSV row (no header) to stdout;
+//                       --reuse-n N (default 1) multiplies bytes-moved and
+//                       repeats each kernel launch N times per timed trial
+//   --fixed-blocks0/1  (v3 Change 3) skip the in-context search entirely and
+//                       measure directly at these block counts -- used by the
+//                       reuse overlay, which must hold blocks fixed across
+//                       reuse_N rather than re-searching per N
+//   --reuse-overlay    (v3 Change 3, requires --fixed-blocks0/1) print the
+//                       reuse-overlay CSV row (adds reuse_N, drops
+//                       plateau_reached/delta_vs_shared_pct) instead of the
+//                       standard row -- routed by the caller to the SEPARATE
+//                       results/phase3_reuse_results.csv, never
+//                       phase3_results.csv
 //   --verify           create the requested SM split, run the %smid probe kernel
 //                       on each partition, report whether the observed SM id sets
 //                       are disjoint (evidence partitioning took effect)
@@ -390,6 +404,12 @@ struct Args {
     int blocks1Seed = 64;                 // measurement mode: seed/lower bound for the in-context search
     int tpb = 256;
     int trials = 10;
+    int reuseN = 1;                       // v3 Change 3: inter-launch reuse count (both kernels)
+    int fixedBlocks0 = -1;                 // v3 Change 3: if >0 (with fixedBlocks1), SKIP the
+    int fixedBlocks1 = -1;                 // in-context search and use these blocks directly
+    bool reuseOverlay = false;             // v3 Change 3: print the reuse-overlay CSV row (with
+                                            // reuse_N) instead of the standard v2 row; requires
+                                            // fixedBlocks0/1 (never re-search per reuse_N)
     bool verify = false;
     bool checkApiOnly = false;
 };
@@ -414,6 +434,10 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--blocks1-seed") a.blocks1Seed = std::atoi(next().c_str());
         else if (arg == "--tpb") a.tpb = std::atoi(next().c_str());
         else if (arg == "--trials") a.trials = std::atoi(next().c_str());
+        else if (arg == "--reuse-n") a.reuseN = std::atoi(next().c_str());
+        else if (arg == "--fixed-blocks0") a.fixedBlocks0 = std::atoi(next().c_str());
+        else if (arg == "--fixed-blocks1") a.fixedBlocks1 = std::atoi(next().c_str());
+        else if (arg == "--reuse-overlay") a.reuseOverlay = true;
         else if (arg == "--verify") a.verify = true;
         else if (arg == "--check-api") a.checkApiOnly = true;
         else {
@@ -430,7 +454,7 @@ static Args parseArgs(int argc, char** argv) {
 
 static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
                                    float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
-                                   int tpb, int trials, double* k0MsOut, double* k1MsOut) {
+                                   int tpb, int trials, int reuseN, double* k0MsOut, double* k1MsOut) {
     cudaStream_t s0, s1;
     CUDA_CHECK(cudaStreamCreate(&s0));
     CUDA_CHECK(cudaStreamCreate(&s1));
@@ -452,9 +476,12 @@ static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0,
         CUDA_CHECK(cudaEventRecord(start, s0));
         CUDA_CHECK(cudaStreamWaitEvent(s1, start, 0));
 
-        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        // v3 Change 3: reuseN identical re-launches over the SAME buffers (inter-launch,
+        // full-buffer reuse -- OVERVIEW.md / Phase 1/4 definition). reuseN=1 (default) is
+        // exactly the v2 behavior.
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
         CUDA_CHECK(cudaEventRecord(stop0, s0));
-        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
         CUDA_CHECK(cudaEventRecord(stop1, s1));
 
         CUDA_CHECK(cudaEventSynchronize(stop0));
@@ -486,7 +513,7 @@ static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0,
 static bool measureGreenWallMs(CUdevice dev, int sm0Count,
                                 float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
                                 float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
-                                int tpb, int trials,
+                                int tpb, int trials, int reuseN,
                                 double* wallMsOut, double* k0MsOut, double* k1MsOut) {
     GreenPartition p0{}, p1{};
     CUresult err = CUDA_SUCCESS;
@@ -524,12 +551,12 @@ static bool measureGreenWallMs(CUdevice dev, int sm0Count,
         CUDA_CHECK(cudaStreamWaitEvent(s1, start, 0));
 
         CU_CHECK(cuCtxPushCurrent(p0.ctxView));
-        addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocks0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
         CUDA_CHECK(cudaEventRecord(stop0, s0));
         CU_CHECK(cuCtxPopCurrent(nullptr));
 
         CU_CHECK(cuCtxPushCurrent(p1.ctxView));
-        addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocks1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
         CUDA_CHECK(cudaEventRecord(stop1, s1));
         CU_CHECK(cuCtxPopCurrent(nullptr));
 
@@ -644,6 +671,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (a.reuseOverlay && (a.fixedBlocks0 <= 0 || a.fixedBlocks1 <= 0)) {
+        fprintf(stderr, "ERROR: --reuse-overlay requires --fixed-blocks0/--fixed-blocks1 (>0) -- "
+                         "the reuse overlay never re-searches per reuse_N (v3 Change 3), the "
+                         "caller must supply the stability-verified block counts.\n");
+        return 2;
+    }
+
 #if GREEN_CTX_COMPILED
     CUdevice dev = 0;
     if (a.config == "green" || a.verify) {
@@ -687,7 +721,10 @@ int main(int argc, char** argv) {
     // a.sm0/a.sm1 for green (each kernel confined to its own partition).
     int assignedSm0 = (a.config == "shared") ? 16 : a.sm0;
     int assignedSm1 = (a.config == "shared") ? 16 : a.sm1;
-    double totalBytesForSearch = 3.0 * (double)n0 * 4.0 + 3.0 * (double)n1 * 4.0;  // A+B+C both kernels
+    // v3 Change 3: reuseN scales bytes moved (search must see the SAME per-launch byte
+    // volume the final measurement will use, so the plateau it finds is valid at that N).
+    double totalBytesForSearch =
+        (3.0 * (double)n0 * 4.0 + 3.0 * (double)n1 * 4.0) * (double)a.reuseN;
 
     bool ratioRejected = false;
     // aggGBpsForPair: single point of contact with the device for the search --
@@ -699,12 +736,12 @@ int main(int argc, char** argv) {
         bool ok;
         if (a.config == "shared") {
             wMs = measureSharedWallMs(dA0, dB0, dC0, n0, b0, dA1, dB1, dC1, n1, b1,
-                                       a.tpb, kSearchTrials, &m0, &m1);
+                                       a.tpb, kSearchTrials, a.reuseN, &m0, &m1);
             ok = true;
         } else {
 #if GREEN_CTX_COMPILED
             ok = measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, b0, dA1, dB1, dC1, n1, b1,
-                                     a.tpb, kSearchTrials, &wMs, &m0, &m1);
+                                     a.tpb, kSearchTrials, a.reuseN, &wMs, &m0, &m1);
 #else
             ok = false;
 #endif
@@ -713,38 +750,50 @@ int main(int argc, char** argv) {
         return totalBytesForSearch / (wMs / 1000.0) / 1e9;
     };
 
-    std::vector<int> cand0 = buildBlockCandidates(a.blocks0Seed, assignedSm0);
-    std::vector<int> cand1 = buildBlockCandidates(a.blocks1Seed, assignedSm1);
+    int bestBlocks0, bestBlocks1;
+    bool plateauReached;
+    if (a.fixedBlocks0 > 0 && a.fixedBlocks1 > 0) {
+        // v3 Change 3: reuse-overlay caller already found + stability-verified these
+        // blocks (via a separate search invocation at reuse_N=1 and a checkN) -- never
+        // re-search per reuse_N, just measure directly at the given block counts.
+        bestBlocks0 = a.fixedBlocks0;
+        bestBlocks1 = a.fixedBlocks1;
+        plateauReached = true;  // inherited from the caller's stability-verified search
+    } else {
+        std::vector<int> cand0 = buildBlockCandidates(a.blocks0Seed, assignedSm0);
+        std::vector<int> cand1 = buildBlockCandidates(a.blocks1Seed, assignedSm1);
 
-    // pass 1: sweep K0 candidates with K1 held at its own lower bound
-    SearchAxisResult r0 = sweepBlockAxis(
-        [&](int c) { return aggGBpsForPair(c, cand1.front()); }, cand0);
-    if (ratioRejected) {
-        fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
-                a.sm0, a.sm1);
-        cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
-        cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
-        return 4;
-    }
-    int bestBlocks0 = r0.chosenBlocks;
+        // pass 1: sweep K0 candidates with K1 held at its own lower bound
+        SearchAxisResult r0 = sweepBlockAxis(
+            [&](int c) { return aggGBpsForPair(c, cand1.front()); }, cand0);
+        if (ratioRejected) {
+            fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
+                    a.sm0, a.sm1);
+            cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+            cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+            return 4;
+        }
+        bestBlocks0 = r0.chosenBlocks;
 
-    // pass 2: sweep K1 candidates with K0 held at the pass-1 winner
-    SearchAxisResult r1 = sweepBlockAxis(
-        [&](int c) { return aggGBpsForPair(bestBlocks0, c); }, cand1);
-    if (ratioRejected) {
-        fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
-                a.sm0, a.sm1);
-        cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
-        cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
-        return 4;
-    }
-    int bestBlocks1 = r1.chosenBlocks;
-    bool plateauReached = r0.plateauReached && r1.plateauReached;
-    if (!plateauReached) {
-        fprintf(stderr, "WARNING: block search did not plateau within cap=%d for test_point=%s "
-                         "config=%s sm=%d:%d (blocks_k0=%d plateau0=%d, blocks_k1=%d plateau1=%d)\n",
-                kBlocksCap, a.testPointId.c_str(), a.config.c_str(), a.sm0, a.sm1,
-                bestBlocks0, r0.plateauReached, bestBlocks1, r1.plateauReached);
+        // pass 2: sweep K1 candidates with K0 held at the pass-1 winner
+        SearchAxisResult r1 = sweepBlockAxis(
+            [&](int c) { return aggGBpsForPair(bestBlocks0, c); }, cand1);
+        if (ratioRejected) {
+            fprintf(stderr, "WARNING: SM split %d:%d rejected during block search -- skipping cell\n",
+                    a.sm0, a.sm1);
+            cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
+            cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
+            return 4;
+        }
+        bestBlocks1 = r1.chosenBlocks;
+        plateauReached = r0.plateauReached && r1.plateauReached;
+        if (!plateauReached) {
+            fprintf(stderr, "WARNING: block search did not plateau within cap=%d for test_point=%s "
+                             "config=%s sm=%d:%d reuse_N=%d (blocks_k0=%d plateau0=%d, "
+                             "blocks_k1=%d plateau1=%d)\n",
+                    kBlocksCap, a.testPointId.c_str(), a.config.c_str(), a.sm0, a.sm1, a.reuseN,
+                    bestBlocks0, r0.plateauReached, bestBlocks1, r1.plateauReached);
+        }
     }
 
     // ---- final measured cell at the chosen (bestBlocks0, bestBlocks1), full trial count ----
@@ -752,13 +801,13 @@ int main(int argc, char** argv) {
     int smSplit0 = 0, smSplit1 = 0;
     if (a.config == "shared") {
         wallMs = measureSharedWallMs(dA0, dB0, dC0, n0, bestBlocks0, dA1, dB1, dC1, n1, bestBlocks1,
-                                      a.tpb, a.trials, &k0Ms, &k1Ms);
+                                      a.tpb, a.trials, a.reuseN, &k0Ms, &k1Ms);
         smSplit0 = 16;  // shared: both kernels see all 16 SMs
         smSplit1 = 16;
     } else {
 #if GREEN_CTX_COMPILED
         if (!measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, bestBlocks0,
-                                 dA1, dB1, dC1, n1, bestBlocks1, a.tpb, a.trials,
+                                 dA1, dB1, dC1, n1, bestBlocks1, a.tpb, a.trials, a.reuseN,
                                  &wallMs, &k0Ms, &k1Ms)) {
             cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
             cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
@@ -791,11 +840,23 @@ int main(int argc, char** argv) {
     cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
     cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
 
-    double k0Bytes = 3.0 * (double)n0 * 4.0;  // A read + B read + C write
-    double k1Bytes = 3.0 * (double)n1 * 4.0;
+    // v3 Change 3: bytes moved scale with reuse_N (reuseN=1 -> identical to v2).
+    double k0Bytes = 3.0 * (double)n0 * 4.0 * (double)a.reuseN;  // A read + B read + C write
+    double k1Bytes = 3.0 * (double)n1 * 4.0 * (double)a.reuseN;
     double k0GBps = k0Bytes / (k0Ms / 1000.0) / 1e9;
     double k1GBps = k1Bytes / (k1Ms / 1000.0) / 1e9;
     double aggGBps = (k0Bytes + k1Bytes) / (wallMs / 1000.0) / 1e9;
+
+    if (a.reuseOverlay) {
+        // v3 Change 3: separate schema (with reuse_N) for results/phase3_reuse_results.csv --
+        // the standard phase3_results.csv row format below is untouched by this branch.
+        printf("%s,%s,%zu,%zu,%s,%d,%d,%d,%d,%d,%d,%d,%.6f,%.3f,%.3f,%.3f,%d,%s,%.1f,%s,%s\n",
+               a.testPointId.c_str(), a.mode.c_str(), a.k0Bytes, a.k1Bytes, a.config.c_str(),
+               smSplit0, smSplit1, bestBlocks0, bestBlocks1, a.tpb, a.trials, a.reuseN,
+               wallMs, aggGBps, k0GBps, k1GBps, env.gpu_clock_mhz, env.power_mode.c_str(),
+               env.soc_temp_c, env.cuda_version.c_str(), env.driver_version.c_str());
+        return 0;
+    }
 
     // delta_vs_shared_pct is filled in by scripts/sweep.py after collecting the
     // matching shared-baseline row for this test_point_id (needs cross-row join).

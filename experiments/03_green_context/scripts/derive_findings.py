@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
-"""Derive findings.json + FINDINGS.md from results/phase3_results.csv (Phase 3 v2).
+"""Derive findings.json + FINDINGS.md from results/phase3_results.csv (Phase 3 v3).
 
 Numbers are computed from the actual measured CSV -- never hand-typed -- so this
 must be re-run (not hand-edited) whenever the CSV changes. Run after run.sh.
+
+v3 changes (prompts/03_green_context_v3.md): findings.json's SCHEMA is
+unchanged from v2 (per the prompt: "Regenerate findings.json (same schema as
+v2) ... from the reuse=1 sweep only"). Two purely additive FINDINGS.md-only
+sections (never touch findings.json / the Phase 4 handoff):
+  - "Grid alignment with Phase 2" (Change 1): lists the actual symmetric sizes
+    swept, now identical to Phase 2's own grid, so the FINDINGS.md record
+    states this supersedes v2's independent geometric grid.
+  - "Reuse overlay" (Change 3): reads the SEPARATE, optional
+    results/phase3_reuse_results.csv (scripts/sweep_reuse.py) if present, and
+    summarizes whether green's delta vs shared improves with reuse_N at each
+    subset size. Skipped with a note if that CSV doesn't exist yet -- this
+    script must run correctly whether or not the reuse overlay has been run.
 
 v2 changes vs the original derive_findings.py (prompts/03_green_context_v2.md):
   - `regime` is now classified from the SIZE itself (per-SM working set vs the
@@ -37,6 +50,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PHASE_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
 CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
+REUSE_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse_results.csv")
 FINDINGS_JSON_PATH = os.path.join(PHASE_DIR, "findings.json")
 FINDINGS_MD_PATH = os.path.join(PHASE_DIR, "FINDINGS.md")
 
@@ -253,6 +267,73 @@ def block_saturation_sanity_gate(per_point):
     }
 
 
+def grid_alignment_note(per_point):
+    """v3 Change 1, FINDINGS.md-only: list the actual symmetric sizes swept (now
+    Phase 2's own grid + the small-end extension) so the record states this run
+    is directly overlayable with Phase 2, superseding v2's independent 1.8x
+    geometric grid."""
+    sym_sizes = sorted({p["swept_size_bytes"] for p in per_point if p["mode"] == "symmetric"})
+    if not sym_sizes:
+        return "(no symmetric points in this run -- grid alignment cannot be confirmed)"
+    size_list = ", ".join(f"{s:,}" for s in sym_sizes)
+    return (f"This run's symmetric per-kernel size grid ({len(sym_sizes)} sizes) is Phase 2's own "
+            f"grid (`experiments/02_two_kernel_size/scripts/gen_config.py:symmetric_sizes_bytes()`) "
+            f"plus a small-end extension (32 KiB, 64 KiB) for the L1/scheduling regime, imported "
+            f"directly rather than re-derived -- so Phase 1/2/3 curves now sit at the SAME x "
+            f"positions and are directly overlayable. This supersedes v2's independent 1.8x "
+            f"geometric grid (65536, 117965, 212337, ...), which only coincided with Phase 2 at the "
+            f"3 anchor points. Sizes (bytes): {size_list}.")
+
+
+def reuse_overlay_summary():
+    """v3 Change 3, FINDINGS.md-only: does green's delta vs shared improve with
+    reuse_N? Reads the SEPARATE, optional results/phase3_reuse_results.csv
+    (scripts/sweep_reuse.py) -- never touches findings.json (the Phase 4
+    handoff stays reuse=1-only, per the prompt). Skips cleanly if that CSV
+    doesn't exist yet."""
+    if not os.path.exists(REUSE_CSV_PATH):
+        return ("Not run this session -- `results/phase3_reuse_results.csv` does not exist. "
+                "Run `scripts/sweep_reuse.py` (after `scripts/sweep.py`) to generate the reuse_N "
+                "overlay and re-run this script to fill in this section.")
+
+    rdf = pd.read_csv(REUSE_CSV_PATH)
+    lines = []
+    any_improves = False
+    for tp, sub in rdf.groupby("test_point_id"):
+        size_bytes = int(sub.k0_bytes.iloc[0])
+        shared = sub[sub.config == "shared"].sort_values("reuse_N")
+        green = sub[sub.config == "green"].sort_values("reuse_N")
+        if shared.empty or green.empty:
+            lines.append(f"- **{tp}** ({size_bytes:,} B): incomplete (missing shared or green rows)")
+            continue
+        merged = pd.merge(shared[["reuse_N", "agg_GBps_median"]], green[["reuse_N", "agg_GBps_median"]],
+                          on="reuse_N", suffixes=("_shared", "_green"))
+        merged["delta_pct"] = ((merged.agg_GBps_median_green - merged.agg_GBps_median_shared)
+                               / merged.agg_GBps_median_shared * 100.0)
+        delta_n1 = merged[merged.reuse_N == 1].delta_pct
+        delta_nmax = merged[merged.reuse_N == merged.reuse_N.max()].delta_pct
+        if delta_n1.empty or delta_nmax.empty:
+            lines.append(f"- **{tp}** ({size_bytes:,} B): incomplete reuse_N coverage")
+            continue
+        d1, dmax = float(delta_n1.iloc[0]), float(delta_nmax.iloc[0])
+        nmax = int(merged.reuse_N.max())
+        improved = dmax > d1 + HELPS_THRESHOLD_PCT / 2  # meaningfully rising, not just noise
+        crossed = d1 <= 0 < dmax
+        if improved:
+            any_improves = True
+        verdict = ("CROSSES into green-helps at higher reuse" if crossed else
+                  "delta improves with reuse (still not a win)" if improved else
+                  "flat/no improvement with reuse")
+        lines.append(f"- **{tp}** ({size_bytes:,} B/kernel): delta @ reuse_N=1 = {d1:+.2f}%, "
+                    f"@ reuse_N={nmax} = {dmax:+.2f}% -- {verdict}")
+
+    header = ("At least one subset size shows green's delta improving with reuse_N "
+             "(the predicted L1 inter-launch-reuse benefit)." if any_improves else
+             "No subset size shows green's delta meaningfully improving with reuse_N up to 32 -- "
+             "green context's benefit did not show up via inter-launch L1 reuse in this run either.")
+    return header + "\n\n" + "\n".join(lines)
+
+
 def main():
     if not os.path.exists(CSV_PATH):
         sys.exit(f"CSV not found: {CSV_PATH} (run scripts/run.sh first)")
@@ -336,14 +417,22 @@ def main():
              "(re-run scripts/sweep.py so the Phase 2 anchor is included)."
     )
 
-    md = f"""# Phase 3 v2 Findings — Green Context, In-Context Saturation + Widened Size Sweep
+    grid_note = grid_alignment_note(per_point)
+    reuse_note = reuse_overlay_summary()
+
+    md = f"""# Phase 3 v3 Findings — Green Context, In-Context Saturation + Phase-2-Aligned Size Sweep
 
 Generated {findings['generated_utc']} from `{findings['source_csv']}`. All numbers below
 are computed directly from that CSV by `scripts/derive_findings.py` -- re-run it (do not
-hand-edit) if the CSV is regenerated. See `prompts/03_green_context_v2.md` for the full
-methodology; this supersedes the original Phase 3 run (`prompts/03_green_context.md`).
+hand-edit) if the CSV is regenerated. See `prompts/03_green_context_v3.md` (building on
+`_v2.md`) for the full methodology; this supersedes the original Phase 3 run
+(`prompts/03_green_context.md`) and v2's independently-gridded re-run.
 
 Upstream consumed: {', '.join(consumed) if consumed else '(none found -- placeholder seeds/anchors were used, see scripts/sweep.py WARNINGs)'}
+
+## Grid alignment with Phase 2 (v3 Change 1)
+
+{grid_note}
 
 ## Change 1 sanity gate (block-count saturation)
 
@@ -384,6 +473,10 @@ did not catch. This v2 run's re-swept shared baseline at that point is
 **{gate['v2_shared_917504_agg_GBps']} GB/s** (see sanity gate above). The v1 numbers remain
 recoverable via git history (the commit that introduced `experiments/03_green_context/findings.json`
 before this revision); they are superseded, not deleted from provenance.
+
+## Reuse overlay (v3 Change 3 -- diagnostic only, does NOT feed findings.json / Phase 4)
+
+{reuse_note}
 
 ## Verification (00_conventions.md / prompt Verification section)
 

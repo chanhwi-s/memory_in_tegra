@@ -1,37 +1,46 @@
 #!/usr/bin/env python3
-"""Phase 3 v2 sweep driver: shared vs green-context, across a WIDENED per-kernel
-size sweep (64 KB - 8 MB, symmetric and asymmetric) plus Phase 2's roofline
-anchors, across SM partition ratios. Runnable from anywhere.
+"""Phase 3 v3 sweep driver: shared vs green-context, across a per-kernel size
+sweep ALIGNED to Phase 2's own grid (plus a small-end extension), across SM
+partition ratios. Runnable from anywhere.
 
-v2 changes vs the original sweep.py (prompts/03_green_context_v2.md):
-  - Change 1: block counts are no longer looked up from Phase 1 and held fixed.
-    This script now passes a per-size SEED (still the Phase 1 nearest-neighbor
-    lookup, `nearest_saturation_blocks`) via --blocks0-seed/--blocks1-seed;
-    `phase3_bench` itself runs an in-context local search from that seed and
-    prints the ACTUAL saturated blocks_k0/blocks_k1 + plateau_reached in its
-    CSV row. This script never decides the final block count anymore.
-  - Change 2: the test-point list is no longer capped to Phase 2's 3 roofline
-    points. It now includes a geometric per-kernel size sweep from ~64 KB to
-    ~8 MB (symmetric: both kernels grown together; asymmetric: K0 fixed at
-    1 MB, K1 swept) PLUS Phase 2's `recommended_phase3_test_points` re-added
-    as explicitly-labeled "anchor" cells (id prefix `*_anchor_`) at their exact
-    byte sizes, so they stay directly comparable to the original Phase 3 run.
+v3 changes vs v2 (prompts/03_green_context_v3.md Change 1 -- Changes 2/3 live in
+scripts/plot.py and scripts/sweep_reuse.py respectively):
+  - The v2 sweep used its own 1.8x geometric grid (65536, 117965, 212337, ...),
+    which didn't line up with Phase 2's sizes -- only the 3 anchors coincided,
+    so Phase 1/2/3 curves couldn't be overlaid at the same x positions. v3
+    instead LITERALLY REUSES Phase 2's own `symmetric_sizes_bytes()` /
+    `asymmetric_k1_sizes_bytes(k)` functions (imported directly from
+    experiments/02_two_kernel_size/scripts/gen_config.py, not re-derived) so
+    the two phases' grids can never drift apart again, prepending a small-end
+    extension so the green-context L1/scheduling regime is still covered.
+  - Phase 2's 3 roofline anchors (786432, 917504 symmetric; 2097152 asymmetric)
+    now fall EXACTLY on grid points at this resolution, so anchor tagging is an
+    exact-match snap onto an EXISTING grid cell (is_anchor=True set in place),
+    not a separate duplicate cell like v2's `*_anchor_<i>_<bytes>` rows.
+
+v2 behavior kept as-is: block counts are only a SEED (`--blocks0-seed`/
+`--blocks1-seed`) for phase3_bench's in-context local search, which prints the
+ACTUAL saturated blocks_k0/blocks_k1 + plateau_reached; this script never
+decides the final block count.
 
 This script owns the outer sweep (which the C++ binary does not know about);
 `phase3_bench` measures exactly one cell per invocation and prints one CSV
 row to stdout. This script:
-  1. reads Phase 2's recommended_phase3_test_points (for anchor labeling only
-     -- the sweep itself does NOT depend on Phase 2) from
+  1. reads Phase 2's recommended_phase3_test_points and asymmetric_k_used_bytes
+     (for grid alignment + anchor labeling) from
      experiments/02_two_kernel_size/findings.json, and saturation-search seeds
      + tpb from experiments/01_single_kernel_size/findings.json, at RUN TIME
-     -- never hard-coded (00_conventions.md #2).
-  2. falls back to placeholder defaults with a loud TODO warning if either is
-     absent -- it does NOT fabricate upstream numbers, it only supplies its
-     own placeholder seeds so the harness is runnable standalone. The size
-     sweep itself (Change 2) never needs a fallback: it is this phase's own,
-     not read from upstream.
+     -- never hard-coded (00_conventions.md #2). Phase 2's grid-generating
+     FUNCTIONS (symmetric_sizes_bytes/asymmetric_k1_sizes_bytes) are imported
+     directly from its scripts/gen_config.py -- these need no upstream run,
+     they're pure size-list generators, so the sweep itself never depends on
+     Phase 2 having been executed, only the anchor labels and exact `k` do.
+  2. falls back to placeholder defaults with a loud TODO warning if either
+     upstream findings.json is absent -- it does NOT fabricate upstream
+     numbers, it only supplies its own placeholder seeds/k so the harness is
+     runnable standalone.
   3. invokes the built binary once per (test_point, config, sm_split) cell;
-     the binary itself saturates blocks_k0/blocks_k1 in context (Change 1).
+     the binary itself saturates blocks_k0/blocks_k1 in context (v2 Change 1).
   4. joins each green row back to its test point's shared baseline to fill
      delta_vs_shared_pct, and writes results/phase3_results.csv.
 
@@ -70,27 +79,43 @@ SYMMETRIC_SPLITS = [(4, 12), (6, 10), (8, 8), (10, 6), (12, 4)]
 NUM_SMS = 16
 L1_BYTES_PER_SM = 192 * 1024
 
-# ---- Change 2: Phase 3's OWN widened per-kernel size sweep ----
-# ~1.5-2x geometric grid from ~64 KB (per-SM working set approaches the 192 KB/SM
-# L1 once partitioned) up to ~8 MB (clearly DRAM-bound), per
-# prompts/03_green_context_v2.md "Change 2". Not capped to Phase 2's 3 points.
-SWEEP_SIZE_LO_BYTES = 64 * 1024
-SWEEP_SIZE_HI_BYTES = 8 * 1024 * 1024
-SWEEP_SIZE_RATIO = 1.8
+# ---- v3 Change 1: reuse Phase 2's exact size-grid functions (never re-derive
+# with a different ratio -- that is what caused the v2/Phase-2 x-axis mismatch
+# this patch fixes). ----
+PHASE2_SCRIPTS_DIR = os.path.join(REPO_ROOT, "experiments", "02_two_kernel_size", "scripts")
+sys.path.insert(0, PHASE2_SCRIPTS_DIR)
+import gen_config as phase2_gen_config  # noqa: E402 (import after sys.path.insert by design)
+
+MiB = 1024 * 1024
+# Small-end extension (prompts/03_green_context_v3.md Change 1): Phase 2's grids
+# start at 0.125 MiB (symmetric) / 0.125*k (asymmetric), which never reaches the
+# green-context L1/scheduling regime (per-SM working set near 192 KB/SM). Prepend
+# these so that regime is still resolved; everything above is Phase 2's own list,
+# untouched.
+SMALL_END_SYMMETRIC_MIB = [0.03125, 0.0625]          # 32 KiB, 64 KiB
+SMALL_END_ASYMMETRIC_K1_FRACS = [0.03125, 0.0625]    # same fractions, applied to k
+
 ASYMMETRIC_K0_FIXED_BYTES = 1 * 1024 * 1024
+# TODO(read from phase2 findings): fallback asymmetric crossover k (Phase 2's
+# `asymmetric_k_used_bytes`) if experiments/02_two_kernel_size/findings.json is
+# missing -- 2 MiB matches Phase 2's own DEFAULT/measured k so the grid is right
+# even before Phase 2 has been run for real.
+DEFAULT_ASYMMETRIC_K_BYTES = 2 * 1024 * 1024
 
 
-def geometric_size_sweep(lo, hi, ratio):
-    sizes = []
-    s = float(lo)
-    while s < hi * (1 - 1e-9):
-        sizes.append(int(round(s)))
-        s *= ratio
-    sizes.append(int(hi))
-    return sizes
+def build_symmetric_sweep_sizes():
+    """Phase 2's exact symmetric per-kernel size grid
+    (`gen_config.symmetric_sizes_bytes()`) plus the small-end extension."""
+    small = [int(round(x * MiB)) for x in SMALL_END_SYMMETRIC_MIB]
+    return small + phase2_gen_config.symmetric_sizes_bytes()
 
 
-SWEEP_SIZES = geometric_size_sweep(SWEEP_SIZE_LO_BYTES, SWEEP_SIZE_HI_BYTES, SWEEP_SIZE_RATIO)
+def build_asymmetric_k1_sizes(k_bytes):
+    """Phase 2's exact asymmetric K1 grid (`gen_config.asymmetric_k1_sizes_bytes`,
+    fractions of the crossover k) plus the small-end extension (also fractions
+    of k, so it scales with whatever k this run actually has)."""
+    small = [int(round(f * k_bytes)) for f in SMALL_END_ASYMMETRIC_K1_FRACS if int(round(f * k_bytes)) > 0]
+    return sorted(set(small + phase2_gen_config.asymmetric_k1_sizes_bytes(k_bytes)))
 
 
 def load_json(path):
@@ -127,31 +152,25 @@ def per_sm_working_set_bytes(per_kernel_bytes, sm_count):
 
 
 def build_test_points(phase2):
-    """Change 2: Phase 3's own size sweep, independent of Phase 2, plus Phase 2's
-    recommended_phase3_test_points re-added as explicitly labeled anchor points
-    at their EXACT byte sizes (not snapped to the nearest sweep-grid point) so
-    they stay directly comparable to the original Phase 3 run."""
+    """v3 Change 1: sizes come from Phase 2's own grid functions, so this grid
+    lines up with Phase 2's (and Phase 1's) x positions exactly. Phase 2's
+    recommended_phase3_test_points anchors now fall EXACTLY on existing grid
+    points at this resolution (0.75/0.875 MiB symmetric; k itself asymmetric),
+    so each anchor is snapped onto its matching grid cell in place
+    (is_anchor=True, test_point_id renamed to include "anchor") rather than
+    added as a separate duplicate cell -- prompt: "verify each anchor still
+    appears exactly once"."""
     warnings = []
-    points = []
-
-    for s in SWEEP_SIZES:
-        points.append({
-            "mode": "symmetric", "test_point_id": f"sym_{s}",
-            "k0_bytes": s, "k1_bytes": s, "is_anchor": False,
-        })
-    for s in SWEEP_SIZES:
-        points.append({
-            "mode": "asymmetric", "test_point_id": f"asym_{s}",
-            "k0_bytes": ASYMMETRIC_K0_FIXED_BYTES, "k1_bytes": s, "is_anchor": False,
-        })
 
     if phase2 is None:
         warnings.append(
             "TODO(read from phase2 findings): experiments/02_two_kernel_size/findings.json "
-            "not found -- the widened size sweep (Change 2) runs regardless, but no "
-            "Phase 2 roofline anchors are labeled in this run. Re-run once Phase 2 exists "
-            "so results stay comparable to the original Phase 3 run."
+            "not found -- using the fallback asymmetric crossover k="
+            f"{DEFAULT_ASYMMETRIC_K_BYTES} bytes and no anchor labels this run. Re-run once "
+            "Phase 2 exists so the grid uses the real k and anchors are labeled."
         )
+        k_bytes = DEFAULT_ASYMMETRIC_K_BYTES
+        anchors = []
     else:
         results = phase2.get("results", {})
         recommended = results.get("recommended_phase3_test_points")
@@ -159,21 +178,45 @@ def build_test_points(phase2):
             sys.exit("FATAL: experiments/02_two_kernel_size/findings.json is present but missing "
                      "required key results.recommended_phase3_test_points (00_conventions.md #2: "
                      "fail loudly, do not substitute a guess).")
-        for i, tp in enumerate(recommended):
-            mode = tp["mode"]
-            if mode == "symmetric":
-                sz = int(tp["per_kernel_bytes"])
-                points.append({
-                    "mode": "symmetric", "test_point_id": f"sym_anchor_{i}_{sz}",
-                    "k0_bytes": sz, "k1_bytes": sz, "is_anchor": True,
-                })
-            else:
-                k0 = int(tp.get("k0_bytes", ASYMMETRIC_K0_FIXED_BYTES))
-                k1 = int(tp["k1_bytes"])
-                points.append({
-                    "mode": "asymmetric", "test_point_id": f"asym_anchor_{i}_{k1}",
-                    "k0_bytes": k0, "k1_bytes": k1, "is_anchor": True,
-                })
+        k_bytes = int(results.get("asymmetric_k_used_bytes", DEFAULT_ASYMMETRIC_K_BYTES))
+        anchors = recommended
+
+    sym_sizes = build_symmetric_sweep_sizes()
+    asym_sizes = build_asymmetric_k1_sizes(k_bytes)
+
+    points = []
+    for s in sym_sizes:
+        points.append({
+            "mode": "symmetric", "test_point_id": f"sym_{s}",
+            "k0_bytes": s, "k1_bytes": s, "is_anchor": False,
+        })
+    for s in asym_sizes:
+        points.append({
+            "mode": "asymmetric", "test_point_id": f"asym_{s}",
+            "k0_bytes": ASYMMETRIC_K0_FIXED_BYTES, "k1_bytes": s, "is_anchor": False,
+        })
+
+    by_key = {(p["mode"], p["k0_bytes"], p["k1_bytes"]): p for p in points}
+    for tp in anchors:
+        mode = tp["mode"]
+        if mode == "symmetric":
+            sz = int(tp["per_kernel_bytes"])
+            key = ("symmetric", sz, sz)
+            size_tag = sz
+        else:
+            k0 = int(tp.get("k0_bytes", ASYMMETRIC_K0_FIXED_BYTES))
+            k1 = int(tp["k1_bytes"])
+            key = ("asymmetric", k0, k1)
+            size_tag = k1
+        match = by_key.get(key)
+        if match is None:
+            sys.exit(f"FATAL: Phase 2 anchor {tp} does not land on an exact Phase 3 v3 grid "
+                     f"point (key={key}). The v3 prompt requires exact grid alignment (Change 1) "
+                     f"-- this means build_symmetric_sweep_sizes/build_asymmetric_k1_sizes have "
+                     f"drifted from Phase 2's gen_config.py functions. Fix the drift; do not "
+                     f"silently snap to a nearby point.")
+        match["is_anchor"] = True
+        match["test_point_id"] = f"{'sym' if mode == 'symmetric' else 'asym'}_anchor_{size_tag}"
 
     return points, warnings
 
@@ -290,10 +333,11 @@ def main():
 
     if args.dry_run:
         n_anchor = sum(1 for c in cells if c["is_anchor"])
+        n_sym = len({c["k0_bytes"] for c in cells if c["mode"] == "symmetric"})
+        n_asym = len({c["k1_bytes"] for c in cells if c["mode"] == "asymmetric"})
         print(f"Planned {len(cells)} cells ({n_anchor} at Phase 2 anchor sizes, "
-              f"{len(SWEEP_SIZES)} sizes/mode in the widened sweep, "
-              f"per-kernel size range {SWEEP_SIZE_LO_BYTES}-{SWEEP_SIZE_HI_BYTES} bytes, "
-              f"ratio {SWEEP_SIZE_RATIO}x):")
+              f"{n_sym} symmetric sizes, {n_asym} asymmetric K1 sizes -- grid aligned to "
+              f"Phase 2's gen_config.py, v3 Change 1):")
         for c in cells:
             ws0 = per_sm_working_set_bytes(c["k0_bytes"], c["sm0"])
             near_l1 = " <=L1/SM" if ws0 <= L1_BYTES_PER_SM else ""

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Build (if needed), lock clocks, run the Phase 3 v2 sweep, plot, derive findings, and log
-# the environment -- a single end-to-end entry point (no separate plot.py /
-# derive_findings.py invocation needed). Intended to run on the Jetson AGX Orin device
-# itself. Runnable from anywhere. Needs pandas + matplotlib for the plot/findings steps.
+# Build (if needed), lock clocks, run the Phase 3 v3 REUSE=1 sweep, plot, derive
+# findings, and log the environment -- a single end-to-end entry point (no separate
+# plot.py / derive_findings.py invocation needed). Intended to run on the Jetson AGX
+# Orin device itself. Runnable from anywhere. Needs pandas + matplotlib for the
+# plot/findings steps.
 #
-# v2 (prompts/03_green_context_v2.md): the sweep is now a widened per-kernel size
-# sweep (~64 KB - 8 MB, symmetric + asymmetric) instead of 3 fixed points, and
-# EACH cell runs an in-context block-count saturation search inside phase3_bench
-# (not a single fixed-block measurement) -- this run takes noticeably longer than
-# the original Phase 3 run. See scripts/sweep.py --dry-run to preview cell count.
+# v2 (prompts/03_green_context_v2.md): the sweep is a widened per-kernel size sweep
+# instead of 3 fixed points, and EACH cell runs an in-context block-count saturation
+# search inside phase3_bench (not a single fixed-block measurement) -- this run takes
+# noticeably longer than the original Phase 3 run.
+# v3 (prompts/03_green_context_v3.md): the size grid is now Phase 2's own grid (+ a
+# small-end extension), so this script's output is directly x-axis-comparable to
+# Phase 2's. This script covers the reuse=1 sweep ONLY; the separate, optional
+# reuse_N overlay (Change 3) is scripts/sweep_reuse.py -- run it manually AFTER this
+# script (it reads back this run's results/phase3_results.csv), then re-run
+# scripts/plot.py to add reuse_green_vs_shared.png. See scripts/sweep.py --dry-run
+# to preview cell count before running for real.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,3 +84,7 @@ echo "  CSV:      $PHASE_DIR/results/phase3_results.csv"
 echo "  Plots:    $PHASE_DIR/results/plots/"
 echo "  Findings: $PHASE_DIR/findings.json, $PHASE_DIR/FINDINGS.md"
 echo "  Env log appended: $ENV_MD"
+echo ""
+echo "Optional (v3 Change 3): run scripts/sweep_reuse.py then scripts/plot.py again"
+echo "to add the reuse_N overlay (reuse_green_vs_shared.png) -- diagnostic only,"
+echo "does not change the results/findings above."
