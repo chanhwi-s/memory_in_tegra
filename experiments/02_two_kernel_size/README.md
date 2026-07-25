@@ -1,13 +1,15 @@
 # Phase 2 — Two-Kernel Size Sweep (green context OFF, zero copy OFF)
 
-See `../../OVERVIEW.md` §3 and `../../prompts/02_two_kernel_size.md` for the full spec; this
-README only covers how to build/run this phase and how it links to Phase 1.
+See `../../OVERVIEW.md` §3, `../../prompts/02_two_kernel_size.md` (main sweep) and
+`../../prompts/02_two_kernel_size_v2.md` (reuse-overlay add-on) for the full spec; this README
+only covers how to build/run this phase and how it links to Phase 1.
 
 ## What this measures
 
 Two `C = A + B` kernels (same kernel as Phase 1), each with its own buffers, launched
-concurrently on two CUDA streams, reuse N=1 (Phase 2 does not sweep reuse). Green context and
-zero copy are OFF for the whole phase.
+concurrently on two CUDA streams, reuse N=1 (the main sweep does not sweep reuse — a separate v2
+add-on does, see "v2 add-on: reuse-sweep overlay" below). Green context and zero copy are OFF for
+the whole phase.
 
 - **2a symmetric:** K0 and K1 both size S, S swept so combined read footprint (`2*S + 2*S = 4*S`)
   densifies near L2 (4 MB) and L2+SLC (8 MB).
@@ -53,6 +55,35 @@ scripts/derive_findings.py  results/phase2_results.csv -> findings.json + FINDIN
 results/                  config CSV, results CSV, plots (committed)
 ```
 
+### v2 add-on: reuse-sweep overlay
+
+```
+scripts/run_reuse_overlay.sh    build + lock clocks + reuse sweep + plot + append findings
+scripts/plot_reuse.py           results/phase2_reuse_results.csv -> results/plots/reuse_bw_vs_footprint.png
+scripts/append_reuse_findings.py  appends a "Reuse overlay" section to FINDINGS.md (never touches findings.json)
+results/phase2_reuse_results.csv  reuse_N in {1,2,4,8,16,32}, same size grid as the main sweep
+```
+
+Per `prompts/02_two_kernel_size_v2.md`: `phase2_bench` gained an optional `--reuse-out <path>`
+flag (mirroring Phase 4's reuse loop) that switches entirely to this overlay mode -- when set, it
+does **not** also write `--out`, so `results/phase2_results.csv` and `findings.json` (the frozen
+reuse=1 handoff to Phases 3/4) can never be touched by this add-on. Config/sizes are unchanged
+(`scripts/gen_config.py` was not modified); block counts are searched once at reuse_N=1, verified
+stable at a second N (checkN=4, holding the element-wise max if unstable, with a `NOTE` to
+stderr), then held fixed across all six reuse_N values per cell -- so the added cost is ~6x a
+single reuse=1 run, not 6x a fresh search per N.
+
+Run it with:
+```bash
+scripts/run_reuse_overlay.sh
+```
+This assumes `results/phase2_config.csv` already exists (produced by the main `scripts/run.sh` /
+`gen_config.py`); it will generate it if missing but does not re-run the main sweep.
+`scripts/derive_findings.py` fully rewrites `FINDINGS.md` from `phase2_results.csv`, which would
+silently drop the appended "Reuse overlay" section -- always run
+`scripts/append_reuse_findings.py` *after* `derive_findings.py` if you re-run both by hand
+(`run_reuse_overlay.sh` already does this in the right order).
+
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
@@ -74,12 +105,19 @@ failing, so re-run it with proper privileges on the real device before trusting 
 
 ## Status
 
-**Not yet run on real hardware.** This environment (Windows dev machine) has no CUDA toolkit /
-Jetson device, so `src/phase2_bench.cu` could not be compiled or executed here — only reviewed
-for correctness against the prompt spec. `results/`, `findings.json`, `FINDINGS.md`, and
-`../../shared/env.md` are intentionally **not** pre-populated with placeholder numbers beyond
-`gen_config.py`'s documented fallback sweep plan (see "Dependency on Phase 1" above). Run the
-three commands above on the Jetson (ideally after Phase 1 has real results) to produce them.
+**Main sweep (2a/2b, reuse=1): run on real hardware.** `results/phase2_results.csv`,
+`findings.json`, and `FINDINGS.md` contain real measured numbers (see git history) — this is no
+longer the "not yet run" placeholder state described in earlier revisions of this file.
+
+**v2 reuse-overlay add-on: implemented, not yet run on hardware.** This development environment
+has no CUDA toolchain / Jetson device (checked: no `nvcc` on PATH here), so the `--reuse-out`
+code path in `src/phase2_bench.cu` and the new `scripts/run_reuse_overlay.sh` /
+`scripts/plot_reuse.py` / `scripts/append_reuse_findings.py` could not be compiled or executed in
+this environment — only reviewed against `prompts/02_two_kernel_size_v2.md` and exercised with
+synthetic CSV data (deleted before commit) to verify the plotting/findings scripts run
+end-to-end and are idempotent. Run `scripts/run_reuse_overlay.sh` on the Jetson (after the main
+sweep above) to produce `results/phase2_reuse_results.csv`,
+`results/plots/reuse_bw_vs_footprint.png`, and the "Reuse overlay" section of `FINDINGS.md`.
 
 ## Design notes
 
@@ -101,8 +139,11 @@ three commands above on the Jetson (ideally after Phase 1 has real results) to p
   kernel's per-SM saturation behavior is largely independent of the other kernel's block count.
   Block count is still a knob, not a reported swept axis — `blocks_k0`/`blocks_k1` in the CSV
   record whatever the search landed on for that cell.
-- **Reuse:** fixed at N=1 throughout — Phase 2's prompt does not list reuse as a swept axis (unlike
-  Phase 1), and the CSV schema has no `reuse_N` column.
+- **Reuse:** the main sweep (`phase2_results.csv`) is fixed at N=1 throughout — the original
+  prompt does not list reuse as a swept axis (unlike Phase 1), and its CSV schema has no
+  `reuse_N` column. The v2 add-on (`prompts/02_two_kernel_size_v2.md`) adds a *separate*
+  reuse_N in {1,2,4,8,16,32} sweep via `--reuse-out` -> `phase2_reuse_results.csv`, diagnostic
+  only, never merged into the main CSV/findings — see "v2 add-on: reuse-sweep overlay" above.
 - **Env fields, correctness check, stats (median/min/max/stddev):** identical approach to Phase 1
   (`../01_single_kernel_size/src/phase1_bench.cu`), duplicated rather than shared per the
   phase-isolation rule in `00_conventions.md` #1.

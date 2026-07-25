@@ -5,6 +5,12 @@
 // CUDA streams concurrently. The cell's config (sizes, block-count hints, single-kernel reference
 // throughput from Phase 1) is supplied by scripts/gen_config.py via a small CSV config file --
 // this binary does no JSON parsing and never invents Phase-1 numbers itself.
+//
+// v2 add-on (prompts/02_two_kernel_size_v2.md): an optional `--reuse-out <path>` flag switches
+// to a separate reuse-sweep overlay mode (reuse_N in {1,2,4,8,16,32}, same size grid, config
+// stays shared/zero-copy-off) that writes results/phase2_reuse_results.csv and never touches
+// results/phase2_results.csv or findings.json -- see runReuseSweep() below. Default behavior
+// (no --reuse-out) is completely unchanged from the original reuse=1 sweep.
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -195,15 +201,17 @@ struct ConcurrentResult {
     double agg_GBps_median;
 };
 
-// Runs `trials` timed launches of K0 (stream0) and K1 (stream1) concurrently, both with
-// reuse=1 (Phase 2 does not sweep reuse -- see prompts/02_two_kernel_size.md). A shared
-// "join" event recorded on stream0 and waited-on by stream1 keeps both loops starting from
-// the same reference point so wall time genuinely reflects the overlapped run.
+// Runs `trials` timed launches of K0 (stream0) and K1 (stream1) concurrently, each launch
+// re-reading the identical buffers `reuseN` times (inter-launch, full-buffer reuse; same
+// definition as Phase 1 and Phase 4 -- prompts/02_two_kernel_size_v2.md). The original
+// (non-v2) call sites all pass reuseN=1, which reproduces the exact prior behavior/values. A
+// shared "join" event recorded on stream0 and waited-on by stream1 keeps both loops starting
+// from the same reference point so wall time genuinely reflects the overlapped run.
 static ConcurrentResult measureConcurrent(const float* dA0, const float* dB0, float* dC0,
                                            size_t n0, int blocksK0,
                                            const float* dA1, const float* dB1, float* dC1,
-                                           size_t n1, int blocksK1, int tpb, int trials,
-                                           cudaStream_t s0, cudaStream_t s1) {
+                                           size_t n1, int blocksK1, int tpb, int reuseN,
+                                           int trials, cudaStream_t s0, cudaStream_t s1) {
     // warm-up (untimed), both streams
     for (int w = 0; w < 3; ++w) {
         addKernel<<<blocksK0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
@@ -222,10 +230,10 @@ static ConcurrentResult measureConcurrent(const float* dA0, const float* dB0, fl
         CUDA_CHECK(cudaEventRecord(join, s0));
         CUDA_CHECK(cudaStreamWaitEvent(s1, join, 0));
 
-        addKernel<<<blocksK0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocksK0, tpb, 0, s0>>>(dA0, dB0, dC0, n0);
         CUDA_CHECK(cudaEventRecord(stop0, s0));
 
-        addKernel<<<blocksK1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
+        for (int j = 0; j < reuseN; ++j) addKernel<<<blocksK1, tpb, 0, s1>>>(dA1, dB1, dC1, n1);
         CUDA_CHECK(cudaEventRecord(stop1, s1));
 
         CUDA_CHECK(cudaEventSynchronize(stop0));
@@ -246,8 +254,8 @@ static ConcurrentResult measureConcurrent(const float* dA0, const float* dB0, fl
     r.wall_ms = computeStats(wall_ms);
     Stats k0stat = computeStats(k0_ms);
     Stats k1stat = computeStats(k1_ms);
-    double bytes0 = 3.0 * (double)n0 * 4.0;  // A read + B read + C write, reuse=1
-    double bytes1 = 3.0 * (double)n1 * 4.0;
+    double bytes0 = 3.0 * (double)n0 * 4.0 * (double)reuseN;  // A read + B read + C write, x reuseN
+    double bytes1 = 3.0 * (double)n1 * 4.0 * (double)reuseN;
     r.k0_GBps_median = bytes0 / (k0stat.median / 1000.0) / 1e9;
     r.k1_GBps_median = bytes1 / (k1stat.median / 1000.0) / 1e9;
     r.agg_GBps_median = (bytes0 + bytes1) / (r.wall_ms.median / 1000.0) / 1e9;
@@ -297,13 +305,182 @@ static const std::vector<int> kCandidateMultipliers = {1, 2, 4};  // x hint, cap
 
 static int clampBlocks(int b) { return std::min(b, 1024); }
 
+// Factored out of main()'s original inline search so the v2 reuse-overlay sweep (below) can
+// reuse the identical two-1D-pass search at an arbitrary reuse_N (needed to verify the
+// saturated block count is stable across reuse_N before holding it fixed). 3 trials per
+// candidate, same as the original inline version.
+static void searchBlocks(const float* dA0, const float* dB0, float* dC0, size_t n0,
+                          const float* dA1, const float* dB1, float* dC1, size_t n1, int hintK0,
+                          int hintK1, int tpb, int reuseN, cudaStream_t s0, cudaStream_t s1,
+                          int& outK0, int& outK1) {
+    const int kSearchTrials = 3;
+    int bestK0 = clampBlocks(hintK0);
+    int bestK1 = clampBlocks(hintK1);
+
+    double bestAgg = -1;
+    for (int mult : kCandidateMultipliers) {
+        int cand = clampBlocks(hintK0 * mult);
+        ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, cand, dA1, dB1, dC1, n1, bestK1,
+                                                tpb, reuseN, kSearchTrials, s0, s1);
+        if (r.agg_GBps_median > bestAgg) { bestAgg = r.agg_GBps_median; bestK0 = cand; }
+    }
+    bestAgg = -1;
+    for (int mult : kCandidateMultipliers) {
+        int cand = clampBlocks(hintK1 * mult);
+        ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, bestK0, dA1, dB1, dC1, n1, cand,
+                                                tpb, reuseN, kSearchTrials, s0, s1);
+        if (r.agg_GBps_median > bestAgg) { bestAgg = r.agg_GBps_median; bestK1 = cand; }
+    }
+
+    outK0 = bestK0;
+    outK1 = bestK1;
+}
+
+// ---- v2 add-on: reuse-sweep overlay (prompts/02_two_kernel_size_v2.md) ----
+// Writes results/phase2_reuse_results.csv, reuse_N in {1,2,4,8,16,32}, same size grid and
+// per-cell config as the main sweep (config stays shared -- no green context, zero copy still
+// OFF). Completely separate from the main sweep above: it never opens/writes phase2_results.csv
+// or findings.json, so the frozen reuse=1 handoff to Phases 3/4 is never at risk.
+//
+// Block counts are searched once at reuse_N=1, verified stable at a second N (kReuseCheckN),
+// then held fixed across all six reuse_N values for that cell -- so cost stays ~6x a single
+// reuse=1 run rather than 6x a fresh search per N.
+static const std::vector<int> kReuseNs = {1, 2, 4, 8, 16, 32};
+static const int kReuseCheckN = 4;
+
+static bool runReuseSweep(const std::vector<CellConfig>& cells, const std::string& outPath,
+                           const EnvInfo& env) {
+    const int kTrials = 10;
+
+    FILE* csv = fopen(outPath.c_str(), "w");
+    if (!csv) {
+        fprintf(stderr, "Cannot open %s for writing\n", outPath.c_str());
+        exit(1);
+    }
+    fprintf(csv,
+            "mode,reuse_N,k0_bytes,k1_bytes,combined_read_footprint_bytes,"
+            "blocks_k0,blocks_k1,threads_per_block,trials,"
+            "wall_ms_median,agg_GBps_median,k0_GBps_median,k1_GBps_median,"
+            "single_k0_GBps_ref,single_k1_GBps_ref,scaling_efficiency,"
+            "gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version\n");
+
+    cudaStream_t s0, s1;
+    CUDA_CHECK(cudaStreamCreate(&s0));
+    CUDA_CHECK(cudaStreamCreate(&s1));
+
+    bool anyCorrectnessFail = false;
+
+    for (const CellConfig& cfg : cells) {
+        size_t n0 = cfg.k0_bytes / sizeof(float);
+        size_t n1 = cfg.k1_bytes / sizeof(float);
+
+        float *dA0, *dB0, *dC0, *dA1, *dB1, *dC1;
+        CUDA_CHECK(cudaMalloc(&dA0, n0 * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&dB0, n0 * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&dC0, n0 * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&dA1, n1 * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&dB1, n1 * sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&dC1, n1 * sizeof(float)));
+
+        fillKernel<<<256, cfg.threads_per_block, 0, s0>>>(dA0, dB0, n0);
+        fillKernel<<<256, cfg.threads_per_block, 0, s1>>>(dA1, dB1, n1);
+        CUDA_CHECK(cudaStreamSynchronize(s0));
+        CUDA_CHECK(cudaStreamSynchronize(s1));
+
+        // ---- determine block counts at reuse_N=1, verify stable at kReuseCheckN, hold fixed ----
+        int k0AtN1, k1AtN1;
+        searchBlocks(dA0, dB0, dC0, n0, dA1, dB1, dC1, n1, cfg.blocks_k0_hint, cfg.blocks_k1_hint,
+                     cfg.threads_per_block, 1, s0, s1, k0AtN1, k1AtN1);
+        int k0AtCheck, k1AtCheck;
+        searchBlocks(dA0, dB0, dC0, n0, dA1, dB1, dC1, n1, cfg.blocks_k0_hint, cfg.blocks_k1_hint,
+                     cfg.threads_per_block, kReuseCheckN, s0, s1, k0AtCheck, k1AtCheck);
+
+        int heldK0 = k0AtN1, heldK1 = k1AtN1;
+        if (k0AtN1 != k0AtCheck || k1AtN1 != k1AtCheck) {
+            fprintf(stderr,
+                    "NOTE: block saturation NOT stable across reuse_N at mode=%s k0=%zu k1=%zu "
+                    "(N=1 -> %d,%d ; N=%d -> %d,%d). Using the element-wise max (safer, avoids "
+                    "under-saturation) and holding it across the reuse sweep.\n",
+                    cfg.mode.c_str(), cfg.k0_bytes, cfg.k1_bytes, k0AtN1, k1AtN1, kReuseCheckN,
+                    k0AtCheck, k1AtCheck);
+            heldK0 = clampBlocks(std::max(k0AtN1, k0AtCheck));
+            heldK1 = clampBlocks(std::max(k1AtN1, k1AtCheck));
+        }
+
+        size_t combinedFootprint = 2 * cfg.k0_bytes + 2 * cfg.k1_bytes;
+
+        for (size_t ri = 0; ri < kReuseNs.size(); ++ri) {
+            int reuseN = kReuseNs[ri];
+            ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, heldK0, dA1, dB1, dC1, n1,
+                                                    heldK1, cfg.threads_per_block, reuseN, kTrials,
+                                                    s0, s1);
+
+            double relStd = r.wall_ms.stddev / r.wall_ms.median;
+            if (relStd > 0.05) {
+                fprintf(stderr,
+                        "WARNING: high variance (stddev/median=%.3f) at mode=%s k0=%zu k1=%zu "
+                        "reuse_N=%d\n",
+                        relStd, cfg.mode.c_str(), cfg.k0_bytes, cfg.k1_bytes, reuseN);
+            }
+
+            // Correctness sample-check at only the smallest and largest reuse_N (Verification:
+            // "sample-check both kernels at a couple of reuse_N values") -- the kernel body is
+            // identical at every N, so a full per-N check would be redundant.
+            if (ri == 0 || ri == kReuseNs.size() - 1) {
+                if (!checkCorrectness(dC0, n0) || !checkCorrectness(dC1, n1)) {
+                    fprintf(stderr,
+                            "CORRECTNESS FAILURE (reuse overlay) at mode=%s k0=%zu k1=%zu "
+                            "reuse_N=%d\n",
+                            cfg.mode.c_str(), cfg.k0_bytes, cfg.k1_bytes, reuseN);
+                    anyCorrectnessFail = true;
+                }
+            }
+
+            double scalingEff = -1.0;
+            if (cfg.single_k0_GBps_ref > 0 && cfg.single_k1_GBps_ref > 0) {
+                scalingEff = r.agg_GBps_median / (cfg.single_k0_GBps_ref + cfg.single_k1_GBps_ref);
+            }
+
+            fprintf(csv,
+                    "%s,%d,%zu,%zu,%zu,%d,%d,%d,%d,"
+                    "%.6f,%.3f,%.3f,%.3f,"
+                    "%.3f,%.3f,%.6f,"
+                    "%d,%s,%.1f,%s,%s\n",
+                    cfg.mode.c_str(), reuseN, cfg.k0_bytes, cfg.k1_bytes, combinedFootprint,
+                    heldK0, heldK1, cfg.threads_per_block, kTrials, r.wall_ms.median,
+                    r.agg_GBps_median, r.k0_GBps_median, r.k1_GBps_median, cfg.single_k0_GBps_ref,
+                    cfg.single_k1_GBps_ref, scalingEff, env.gpu_clock_mhz, env.power_mode.c_str(),
+                    env.soc_temp_c, env.cuda_version.c_str(), env.driver_version.c_str());
+        }
+
+        CUDA_CHECK(cudaFree(dA0)); CUDA_CHECK(cudaFree(dB0)); CUDA_CHECK(cudaFree(dC0));
+        CUDA_CHECK(cudaFree(dA1)); CUDA_CHECK(cudaFree(dB1)); CUDA_CHECK(cudaFree(dC1));
+
+        fprintf(stderr, "done (reuse overlay) mode=%s k0=%zu k1=%zu held_blocks=(%d,%d)\n",
+                cfg.mode.c_str(), cfg.k0_bytes, cfg.k1_bytes, heldK0, heldK1);
+    }
+
+    CUDA_CHECK(cudaStreamDestroy(s0));
+    CUDA_CHECK(cudaStreamDestroy(s1));
+    fclose(csv);
+
+    if (anyCorrectnessFail) {
+        fprintf(stderr, "STOP: correctness check failed in reuse overlay, see above.\n");
+        return false;
+    }
+    fprintf(stderr, "Wrote %s\n", outPath.c_str());
+    return true;
+}
+
 int main(int argc, char** argv) {
     std::string configPath = "results/phase2_config.csv";
     std::string outPath = "results/phase2_results.csv";
+    std::string reuseOutPath;  // empty => standard reuse=1 sweep (default, unchanged behavior)
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--config" && i + 1 < argc) configPath = argv[++i];
         else if (a == "--out" && i + 1 < argc) outPath = argv[++i];
+        else if (a == "--reuse-out" && i + 1 < argc) reuseOutPath = argv[++i];
     }
 
     const int kTrials = 10;
@@ -318,6 +495,13 @@ int main(int argc, char** argv) {
     if (cells.empty()) {
         fprintf(stderr, "No cells to run (empty/missing config %s)\n", configPath.c_str());
         return 1;
+    }
+
+    // v2 add-on (prompts/02_two_kernel_size_v2.md): --reuse-out switches entirely to the
+    // reuse-sweep overlay mode -- it does NOT also write outPath, so the frozen reuse=1
+    // phase2_results.csv / findings.json handoff can never be clobbered by this mode.
+    if (!reuseOutPath.empty()) {
+        return runReuseSweep(cells, reuseOutPath, env) ? 0 : 1;
     }
 
     FILE* csv = fopen(outPath.c_str(), "w");
@@ -355,29 +539,15 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaStreamSynchronize(s0));
         CUDA_CHECK(cudaStreamSynchronize(s1));
 
-        // ---- confirm aggregate plateau: 1D search on K0 blocks, then K1 blocks ----
-        int bestK0 = clampBlocks(cfg.blocks_k0_hint);
-        int bestK1 = clampBlocks(cfg.blocks_k1_hint);
-        {
-            double bestAgg = -1;
-            for (int mult : kCandidateMultipliers) {
-                int cand = clampBlocks(cfg.blocks_k0_hint * mult);
-                ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, cand, dA1, dB1, dC1, n1,
-                                                        bestK1, cfg.threads_per_block, 3, s0, s1);
-                if (r.agg_GBps_median > bestAgg) { bestAgg = r.agg_GBps_median; bestK0 = cand; }
-            }
-            bestAgg = -1;
-            for (int mult : kCandidateMultipliers) {
-                int cand = clampBlocks(cfg.blocks_k1_hint * mult);
-                ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, bestK0, dA1, dB1, dC1, n1,
-                                                        cand, cfg.threads_per_block, 3, s0, s1);
-                if (r.agg_GBps_median > bestAgg) { bestAgg = r.agg_GBps_median; bestK1 = cand; }
-            }
-        }
+        // ---- confirm aggregate plateau: 1D search on K0 blocks, then K1 blocks (reuse_N=1) ----
+        int bestK0, bestK1;
+        searchBlocks(dA0, dB0, dC0, n0, dA1, dB1, dC1, n1, cfg.blocks_k0_hint, cfg.blocks_k1_hint,
+                     cfg.threads_per_block, /*reuseN=*/1, s0, s1, bestK0, bestK1);
 
         // ---- final measured cell at the chosen (bestK0, bestK1) ----
         ConcurrentResult r = measureConcurrent(dA0, dB0, dC0, n0, bestK0, dA1, dB1, dC1, n1,
-                                                bestK1, cfg.threads_per_block, kTrials, s0, s1);
+                                                bestK1, cfg.threads_per_block, /*reuseN=*/1,
+                                                kTrials, s0, s1);
 
         double relStd = r.wall_ms.stddev / r.wall_ms.median;
         if (relStd > 0.05) {
