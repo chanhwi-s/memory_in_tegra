@@ -3,8 +3,6 @@
 reuse overlay CSV). Runnable from anywhere.
 
 v2 changes vs the original plot.py (prompts/03_green_context_v2.md "Metrics / CSV / plots"):
-  - green_vs_shared.png is now a function of per-kernel size (the widened sweep),
-    not 3 bar-chart test points, with Phase 2's roofline anchors marked.
   - partition_sweep.png now contrasts TWO regimes side by side: a small-size point
     (L1/scheduling-sensitive) and the roofline anchor point (DRAM-bound), instead
     of a single "onset" point.
@@ -12,16 +10,29 @@ v2 changes vs the original plot.py (prompts/03_green_context_v2.md "Metrics / CS
     plotted against per-kernel size, with the zero line marked.
 
 v3 changes (prompts/03_green_context_v3.md):
-  - Change 2: every size x-axis (green_vs_shared.png, delta_vs_size.png) is now
-    log BASE 2 with power-of-two tick labels (256K, 512K, 1M, ...) instead of
-    matplotlib's default log10 -- these are byte sizes, base-2 is the natural
-    axis. partition_sweep.png's x-axis is untouched (it's the categorical SM
+  - Change 2: every size x-axis (delta_vs_size.png) is now log BASE 2 with
+    power-of-two tick labels (256K, 512K, 1M, ...) instead of matplotlib's
+    default log10 -- these are byte sizes, base-2 is the natural axis.
+    partition_sweep.png's x-axis is untouched (it's the categorical SM
     split, e.g. "8:8", not a size).
   - Change 3: new plot_reuse_overlay() -> results/plots/reuse_green_vs_shared.png,
     read from the SEPARATE results/phase3_reuse_results.csv (written by
     scripts/sweep_reuse.py). Purely additive: if that CSV doesn't exist yet
     (the reuse overlay hasn't been run), this step is skipped with a note --
     it never blocks the reuse=1 plots above.
+
+05_unified_size_grid_and_plots.md Changes 3/4 (this revision):
+  - green_vs_shared.png (per-kernel-size x-axis) is REMOVED -- it used k0_bytes
+    alone as its x position, which is 4x off from the actual combined cache
+    pressure. green_vs_shared_combined_footprint.png (scripts/plot_combined_footprint.py)
+    is the one remaining green-vs-shared figure, so there is exactly one x-axis
+    convention for it in this phase's output.
+  - Some files in this phase (this docstring included, previously; also
+    prompts/03_green_context/03_combined_footprint_plot.md) used to say this
+    script is off-limits / additive-only. That restriction is explicitly LIFTED
+    for Changes 3 and 4 of prompts/05_unified_size_grid_and_plots.md, which is
+    what removed plot_green_vs_shared() and fixed the reuse-overlay x-axis label
+    (Change 3, plot_reuse_overlay() above).
 """
 import json
 import os
@@ -93,37 +104,6 @@ def _point_summary(df, mode):
         columns=["test_point_id", "size", "is_anchor", "shared_agg_GBps", "best_green_agg_GBps", "delta_pct"])
 
 
-def plot_green_vs_shared(df):
-    """Aggregate GB/s, shared vs best-green, as a function of per-kernel size,
-    one panel per mode; roofline anchors marked with a star."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
-    for ax, mode in zip(axes, ["symmetric", "asymmetric"]):
-        s = _point_summary(df, mode)
-        if s.empty:
-            ax.set_title(f"{mode} (no data)")
-            continue
-        ax.plot(s["size"], s["shared_agg_GBps"], marker="o", label="shared (baseline)")
-        ax.plot(s["size"], s["best_green_agg_GBps"], marker="s", label="best green (partitioned)")
-        anchors = s[s.is_anchor]
-        if not anchors.empty:
-            ax.scatter(anchors["size"], anchors["shared_agg_GBps"], marker="*", s=200,
-                       color="black", zorder=5, label="Phase 2 anchor")
-            ax.scatter(anchors["size"], anchors["best_green_agg_GBps"], marker="*", s=200,
-                       color="black", zorder=5)
-        _set_log2_bytes_axis(ax)
-        xlabel = "per-kernel size (bytes, log2)" if mode == "symmetric" else "K1 size (bytes, log2; K0 fixed 1 MB)"
-        ax.set_xlabel(xlabel)
-        ax.set_title(f"Phase 3 v3: {mode}")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-    axes[0].set_ylabel("Aggregate achieved bandwidth (GB/s)")
-    fig.suptitle("Shared vs best-green aggregate throughput across the widened size sweep")
-    fig.tight_layout()
-    out = os.path.join(PLOTS_DIR, "green_vs_shared.png")
-    fig.savefig(out, dpi=150)
-    print(f"wrote {out}")
-
-
 def _pick_contrast_points(df):
     """Pick a small-size (L1/scheduling-sensitive) ASYMMETRIC point and the
     roofline anchor ASYMMETRIC point, so partition_sweep.png contrasts the two
@@ -131,7 +111,8 @@ def _pick_contrast_points(df):
     point"). Restricted to asymmetric only (03_symmetric_fix_8_8_split.md):
     symmetric green cells are now a single fixed 8:8 split per size, so a
     symmetric partition sweep is one point wide and carries no ratio-sweep
-    information (its single 8:8 series is still visible in green_vs_shared.png)."""
+    information (its single 8:8 series is still visible in
+    green_vs_shared_combined_footprint.png, scripts/plot_combined_footprint.py)."""
     asym = df[df["mode"] == "asymmetric"].copy()
     if asym.empty:
         return None, None
@@ -244,7 +225,15 @@ def plot_reuse_overlay():
     df = pd.read_csv(REUSE_CSV_PATH)
     dram_peak = _load_dram_peak_GBps()
 
+    # Change 3 (05_unified_size_grid_and_plots.md): label with combined read footprint
+    # (2*k0_bytes + 2*k1_bytes), not k0_bytes alone -- k0_bytes is one buffer of one
+    # kernel, off by 4x from the actual cache pressure. Reuse the CSV column when
+    # present (phase2's convention), only recompute as a fallback.
+    if "combined_read_footprint_bytes" not in df.columns:
+        df["combined_read_footprint_bytes"] = 2 * df.k0_bytes + 2 * df.k1_bytes
+
     tp_size = df.groupby("test_point_id").k0_bytes.first().sort_values()
+    tp_footprint = df.groupby("test_point_id").combined_read_footprint_bytes.first()
     test_points = list(tp_size.index)
     n = max(len(test_points), 1)
 
@@ -263,9 +252,11 @@ def plot_reuse_overlay():
         ax.set_xscale("log", base=2)
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _pos: f"{int(round(x))}"))
         ax.xaxis.set_minor_formatter(mticker.NullFormatter())
-        ax.set_xlabel(f"reuse_N (log2) -- {tp} ({_fmt_bytes(int(tp_size[tp]), None)}/kernel)")
+        per_kernel_label = _fmt_bytes(int(tp_size[tp]), None)
+        combined_label = _fmt_bytes(int(tp_footprint[tp]), None)
+        ax.set_xlabel(f"reuse_N (log2) -- {tp} ({per_kernel_label}/kernel, combined read {combined_label})")
         ax.set_ylabel("Aggregate achieved bandwidth (GB/s)")
-        ax.set_title(tp)
+        ax.set_title(f"{tp} ({per_kernel_label}/kernel, combined read {combined_label})")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
     fig.suptitle("Phase 3 v3 reuse overlay: aggregate GB/s vs reuse_N, shared vs best-green "
@@ -279,7 +270,6 @@ def plot_reuse_overlay():
 def main():
     os.makedirs(PLOTS_DIR, exist_ok=True)
     df = load()
-    plot_green_vs_shared(df)
     plot_partition_sweep(df)
     plot_delta_vs_size(df)
     plot_reuse_overlay()

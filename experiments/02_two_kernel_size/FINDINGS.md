@@ -1,8 +1,18 @@
 # Phase 2 Findings — Two-Kernel Size Sweep
 
-Generated 2026-07-27T08:42:40Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
+Generated 2026-07-27T10:17:10Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
 computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not hand-edit)
-if the CSV is regenerated. Consumed upstream: experiments/01_single_kernel_size/findings.json.
+if the CSV is regenerated. Consumed upstream: shared/size_grid.py, experiments/01_single_kernel_size/findings.json.
+
+## Size grid (`prompts/05_unified_size_grid_and_plots.md`)
+
+The symmetric x-axis (`symmetric_sizes_bytes()` in `scripts/gen_config.py`) is now the shared
+combined-read-footprint grid (`shared/size_grid.py::symmetric_per_kernel_sizes_bytes()`, S = F/4,
+24 points) -- densified over combined footprint F = 1-4 MB, which brackets the *measured*
+effective cache boundary (Phase 1's `tier_steps`) rather than the nominal 4MB/8MB tiers this
+grid used to target. It is identical to Phase 3's symmetric grid (asserted in
+`experiments/03_green_context/scripts/sweep.py`). The asymmetric grid is unchanged and
+therefore still not comparable point-for-point against other phases.
 
 ## 2a — Symmetric contention onset (worst measured contention, i.e. the local minimum of scaling_efficiency)
 
@@ -49,35 +59,3 @@ Re-check by eye against `results/plots/sym_agg_vs_footprint.png` and `results/pl
 - The benchmark binary itself (`src/phase2_bench.cu`) prints a `WARNING` to stderr for any cell
   where `wall_ms_median >= serial_sum_ms` (no measured overlap) or a correctness mismatch — check
   the run log for these before trusting this file.
-
-## Reuse overlay
-
-Two-kernel analog of Phase 1's `bw_vs_footprint.png` (see `results/plots/
-reuse_bw_vs_footprint.png`), computed from `results/phase2_reuse_results.csv`
-(`scripts/append_reuse_findings.py`; not part of the frozen `findings.json` handoff --
-diagnostic only).
-
-### Symmetric
-
-- **Symmetric reuse_N values swept:** [1, 2, 4, 8, 16, 32]
-- **Collapse point:** at/above 24.00 MB, reuse N=1 and N=32 aggregate GB/s agree within 5% (no further reuse benefit -- DRAM-bound).
-- At the largest tested size (96.00 MB): reuse N=32 aggregate = 189.7 GB/s.
-- At the smallest tested size (512.0 KB): reuse N=32 aggregate = 96.6 GB/s vs N=1 = 50.2 GB/s (+92% from reuse).
-
-### Asymmetric
-
-- **Asymmetric reuse_N values swept:** [1, 2, 4, 8, 16, 32]
-- **Collapse point:** not reached within the measured range -- reuse N=1 and N=32 still differ by more than 5% at the largest tested size. Consider extending the sweep.
-- At the smallest tested size (256.0 KB): reuse N=32 aggregate = 286.8 GB/s vs N=1 = 186.2 GB/s (+54% from reuse).
-
-### Reading the plot
-
-In the cache-resident region (small combined footprint), higher `reuse_N` lifts the aggregate
-above the measured DRAM peak (cache hits on the re-read buffers). Once the combined footprint
-overflows the effective cache, all `reuse_N` lines collapse onto the DRAM peak line -- reuse
-stops helping because every kernel launch has to re-fetch from DRAM regardless of how many times
-the same buffer is reused. Compare the collapse point above against Phase 1's single-kernel
-collapse (~4 MB read footprint, per Phase 1's `findings.json` /
-`reuse_crossover_note`) -- with two kernels sharing the cache concurrently, the collapse is
-expected at a smaller *per-kernel* footprint than Phase 1's single-kernel number, since the
-effective cache available to each kernel is reduced by the other kernel's concurrent footprint.

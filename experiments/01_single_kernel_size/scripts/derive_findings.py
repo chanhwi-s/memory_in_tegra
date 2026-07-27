@@ -122,10 +122,10 @@ def main():
         "source_csv": "experiments/01_single_kernel_size/results/phase1_results.csv",
         "env_ref": "shared/env.md",
         "results": results,
-        "consumed": [],
+        "consumed": ["shared/size_grid.py"],
     }
 
-    with open(FINDINGS_JSON_PATH, "w") as f:
+    with open(FINDINGS_JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(findings, f, indent=2)
         f.write("\n")
     print(f"wrote {FINDINGS_JSON_PATH}")
@@ -135,6 +135,17 @@ def main():
 Generated {findings['generated_utc']} from `{findings['source_csv']}`. All numbers below
 are computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not
 hand-edit) if the CSV is regenerated.
+
+## Size grid (`prompts/05_unified_size_grid_and_plots.md`)
+
+Sizes come from `../../shared/size_grid.py::phase1_sizes_bytes()` (32 points: the union of
+F/2 and F/4 over the shared combined-footprint grid F), not a hardcoded list -- see
+`README.md`. The tier boundaries below are measured from this densified grid (1-4 MB
+combined footprint is now 256KB-dense); if they differ from a prior run's tier boundaries,
+that is a legitimate consequence of denser sampling, not an error -- flag any such move for
+`OVERVIEW.md` §0 (which still documents the nominal, not measured, 4MB/8MB tiers). Phase 2
+and Phase 3's symmetric x-axis is this same shared combined-read-footprint grid; their
+asymmetric grid is unchanged and therefore not comparable point-for-point across phases.
 
 ## Cache-tier bandwidth steps
 
@@ -166,7 +177,7 @@ Re-check these by eye against `results/plots/bw_vs_footprint.png`:
 - Small size (footprint <= 4 MB) should show reuse pushing BW *above* DRAM peak (cache hits).
 If either does not hold, treat this findings.json as suspect and STOP before Phase 2 consumes it.
 """
-    with open(FINDINGS_MD_PATH, "w") as f:
+    with open(FINDINGS_MD_PATH, "w", encoding="utf-8") as f:
         f.write(md)
     print(f"wrote {FINDINGS_MD_PATH}")
 

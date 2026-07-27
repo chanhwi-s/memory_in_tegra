@@ -55,6 +55,19 @@ def _resolve_column(fieldnames, candidates, csv_path):
     raise RuntimeError(f"{csv_path}: none of {candidates} found in columns {list(fieldnames)}")
 
 
+def _nvtx_name_matches(raw_name, range_name):
+    """True if an nsys NVTX row names `range_name`.
+
+    nsys renders NVTX ranges as "<domain>:<name>"; a range pushed with plain
+    nvtxRangePush (no domain) comes out as ":measure", NOT "measure" -- an
+    exact-equality test therefore never matched and every cell was recorded as
+    a parse failure (all 4 rows of results/overlap_nsys.csv were empty). Accept
+    the bare name, the empty-domain form, and any explicit domain prefix.
+    """
+    s = raw_name.strip()
+    return s == range_name or s.rsplit(":", 1)[-1] == range_name
+
+
 def find_measure_window(nvtx_csv_path, range_name="measure"):
     """Returns (start_ns, end_ns) for the NVTX range named `range_name`."""
     rows = _read_csv_rows(nvtx_csv_path)
@@ -72,10 +85,13 @@ def find_measure_window(nvtx_csv_path, range_name="measure"):
         raise RuntimeError(f"{nvtx_csv_path}: no End or Duration column found in "
                             f"{list(fieldnames)}")
 
-    matches = [r for r in rows if r[name_col].strip() == range_name]
+    matches = [r for r in rows if _nvtx_name_matches(r[name_col], range_name)]
     if not matches:
+        # Report names EXACTLY as nsys wrote them (no .strip()) -- the previous
+        # message normalized them and hid the ":measure" domain prefix that was
+        # the actual mismatch.
         raise RuntimeError(f"{nvtx_csv_path}: no NVTX range named {range_name!r} found "
-                            f"(available names: {sorted({r[name_col].strip() for r in rows})})")
+                            f"(available names, verbatim: {sorted({r[name_col] for r in rows})})")
     row = matches[0]
     start_ns = int(float(row[start_col]))
     end_ns = int(float(row[end_col])) if end_col else start_ns + int(float(row[dur_col]))

@@ -51,6 +51,7 @@ PHASE_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
 CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
 REUSE_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse_results.csv")
+REUSE32_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse32_results.csv")
 FINDINGS_JSON_PATH = os.path.join(PHASE_DIR, "findings.json")
 FINDINGS_MD_PATH = os.path.join(PHASE_DIR, "FINDINGS.md")
 
@@ -269,20 +270,25 @@ def block_saturation_sanity_gate(per_point):
 
 def grid_alignment_note(per_point):
     """v3 Change 1, FINDINGS.md-only: list the actual symmetric sizes swept (now
-    Phase 2's own grid + the small-end extension) so the record states this run
-    is directly overlayable with Phase 2, superseding v2's independent 1.8x
-    geometric grid."""
+    Phase 2's own grid, itself a thin wrapper over shared/size_grid.py -- no
+    small-end extension since prompts/05_unified_size_grid_and_plots.md Change 2)
+    so the record states this run is directly overlayable with Phase 2,
+    superseding v2's independent 1.8x geometric grid."""
     sym_sizes = sorted({p["swept_size_bytes"] for p in per_point if p["mode"] == "symmetric"})
     if not sym_sizes:
         return "(no symmetric points in this run -- grid alignment cannot be confirmed)"
     size_list = ", ".join(f"{s:,}" for s in sym_sizes)
     return (f"This run's symmetric per-kernel size grid ({len(sym_sizes)} sizes) is Phase 2's own "
-            f"grid (`experiments/02_two_kernel_size/scripts/gen_config.py:symmetric_sizes_bytes()`) "
-            f"plus a small-end extension (32 KiB, 64 KiB) for the L1/scheduling regime, imported "
-            f"directly rather than re-derived -- so Phase 1/2/3 curves now sit at the SAME x "
-            f"positions and are directly overlayable. This supersedes v2's independent 1.8x "
-            f"geometric grid (65536, 117965, 212337, ...), which only coincided with Phase 2 at the "
-            f"3 anchor points. Sizes (bytes): {size_list}.")
+            f"grid (`experiments/02_two_kernel_size/scripts/gen_config.py:symmetric_sizes_bytes()`, "
+            f"itself `shared/size_grid.py::symmetric_per_kernel_sizes_bytes()`), imported directly "
+            f"rather than re-derived, with NO per-phase extension -- so this grid is element-wise "
+            f"IDENTICAL to Phase 2's (asserted in scripts/sweep.py), and Phase 1/2/3 curves sit at "
+            f"the SAME x positions and are directly overlayable. The shared grid is densified over "
+            f"combined footprint F = 1-4 MB (the *measured* effective cache boundary, not the "
+            f"nominal 4MB/8MB tiers this grid used to target). This supersedes v2's independent "
+            f"1.8x geometric grid (65536, 117965, 212337, ...), which only coincided with Phase 2 "
+            f"at the 3 anchor points, and the v3-era small-end extension (32 KiB, 64 KiB), which the "
+            f"shared grid's own 32 KiB floor made redundant. Sizes (bytes): {size_list}.")
 
 
 def reuse_overlay_summary():
@@ -334,6 +340,46 @@ def reuse_overlay_summary():
     return header + "\n\n" + "\n".join(lines)
 
 
+def reuse32_overlay_summary():
+    """05_unified_size_grid_and_plots.md Change 5, FINDINGS.md-only: full symmetric
+    grid at a single fixed reuse_N=32 (scripts/sweep_reuse32.py), green split =
+    each size's reuse_N=1-optimal split (read back, NOT re-searched at N=32 --
+    a conditional comparison). Never touches findings.json (Phase 4 handoff stays
+    reuse=1-only). Skips cleanly if results/phase3_reuse32_results.csv doesn't
+    exist yet."""
+    rationale = (
+        "Rationale: at reuse_N=1 the aggregate curve is dominated by cold-miss DRAM traffic and "
+        "green loses at every point -- the mechanism green is supposed to exploit (stabilized "
+        "inter-launch L1 residency) only exists when there IS inter-launch reuse. The existing "
+        "4-point overlay (see \"Reuse overlay\" above) showed green's only win (+33.5% at "
+        "sym_32768) and its worst loss (-26.0% at sym_917504) at N=32, so this full-grid N=32 "
+        "curve is the figure that actually maps green's useful range."
+    )
+    if not os.path.exists(REUSE32_CSV_PATH):
+        return (rationale + "\n\n"
+                "Not run this session -- `results/phase3_reuse32_results.csv` does not exist. "
+                "Run `scripts/sweep_reuse32.py` (after `scripts/sweep.py`) to generate the "
+                "full-grid reuse_N=32 overlay and re-run this script to fill in this section.")
+
+    rdf = pd.read_csv(REUSE32_CSV_PATH)
+    lines = []
+    for tp, sub in sorted(rdf.groupby("test_point_id"), key=lambda kv: int(kv[1].k0_bytes.iloc[0])):
+        size_bytes = int(sub.k0_bytes.iloc[0])
+        shared = sub[sub.config == "shared"]
+        green = sub[sub.config == "green"]
+        if shared.empty or green.empty:
+            lines.append(f"- **{tp}** ({size_bytes:,} B): incomplete (missing shared or green row)")
+            continue
+        shared_agg = float(shared.agg_GBps_median.iloc[0])
+        green_agg = float(green.agg_GBps_median.iloc[0])
+        delta_pct = (green_agg - shared_agg) / shared_agg * 100.0 if shared_agg else float("nan")
+        split = f"{int(green.sm_split_k0.iloc[0])}:{int(green.sm_split_k1.iloc[0])}"
+        lines.append(f"- **{tp}** ({size_bytes:,} B/kernel): shared={shared_agg:.1f} GB/s, "
+                    f"green(N=1-optimal split {split})={green_agg:.1f} GB/s, delta={delta_pct:+.2f}%")
+
+    return rationale + "\n\n" + ("\n".join(lines) if lines else "(no rows)")
+
+
 def main():
     if not os.path.exists(CSV_PATH):
         sys.exit(f"CSV not found: {CSV_PATH} (run scripts/run.sh first)")
@@ -356,7 +402,7 @@ def main():
     n_not_plateaued = sum(1 for p in per_point if p["shared_plateau_reached"] is False or
                           p["best_green_plateau_reached"] is False)
 
-    consumed = []
+    consumed = ["shared/size_grid.py"]
     if os.path.exists(PHASE1_FINDINGS):
         consumed.append(os.path.relpath(PHASE1_FINDINGS, REPO_ROOT).replace(os.sep, "/"))
     if os.path.exists(PHASE2_FINDINGS):
@@ -419,6 +465,7 @@ def main():
 
     grid_note = grid_alignment_note(per_point)
     reuse_note = reuse_overlay_summary()
+    reuse32_note = reuse32_overlay_summary()
 
     md = f"""# Phase 3 v3 Findings — Green Context, In-Context Saturation + Phase-2-Aligned Size Sweep
 
@@ -477,6 +524,11 @@ before this revision); they are superseded, not deleted from provenance.
 ## Reuse overlay (v3 Change 3 -- diagnostic only, does NOT feed findings.json / Phase 4)
 
 {reuse_note}
+
+## Full-grid reuse_N=32 overlay (05_unified_size_grid_and_plots.md Change 5 -- diagnostic
+only, does NOT feed findings.json / Phase 4; feeds green_vs_shared_combined_footprint_n32.png)
+
+{reuse32_note}
 
 ## Verification (00_conventions.md / prompt Verification section)
 

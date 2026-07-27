@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "phase": "03_green_context",
-  "generated_utc": "2026-07-27T08:43:27Z",
+  "generated_utc": "2026-07-27T10:05:33Z",
   "source_csv": "experiments/03_green_context/results/phase3_results.csv",
   "env_ref": "shared/env.md",
   "results": {
@@ -730,6 +730,7 @@
     "cells_not_plateaued": 0
   },
   "consumed": [
+    "shared/size_grid.py",
     "experiments/01_single_kernel_size/findings.json",
     "experiments/02_two_kernel_size/findings.json"
   ]

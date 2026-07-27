@@ -6,17 +6,36 @@ this README only covers how to build/run this phase.
 ## What this measures
 
 `C = A + B` (float, grid-stride, uniform/coalesced), zero copy OFF, green context OFF.
-Sweeps working-set size (16 values, 32 KB - 96 MB per buffer) x reuse N (1..32 launches
-over the same buffers) x block count (16..1024, saturation knob) at threads/block=256,
-plus a one-off threads/block check (128/256/512) at one mid size. Goal: locate the
-L1/L2/SLC/DRAM bandwidth steps and the measured DRAM peak for later phases to build on.
+Sweeps working-set size x reuse N (1..32 launches over the same buffers) x block count
+(16..1024, saturation knob) at threads/block=256, plus a one-off threads/block check
+(128/256/512) at one mid size. Goal: locate the L1/L2/SLC/DRAM bandwidth steps and the
+measured DRAM peak for later phases to build on.
+
+### Size grid (from `../../shared/size_grid.py`, provenance per `00_conventions.md` §2.2)
+
+`scripts/gen_sizes.py` prints `shared/size_grid.py::phase1_sizes_bytes()` and `run.sh` passes
+it to the binary via `--sizes` (falls back to a hardcoded 16-value list only if invoked
+without `--sizes`, e.g. standalone). This is the **union** of F/2 and F/4 over the shared
+combined-footprint grid F (`shared/size_grid.py::combined_footprint_grid_bytes()`, 24 points) --
+32 per-buffer sizes total:
+
+```
+32KB, 64KB, 128KB, 256KB, 320KB, 384KB, 448KB, 512KB, 576KB, 640KB, 704KB, 768KB, 832KB,
+896KB, 960KB, 1MB, 1.12MB, 1.25MB, 1.38MB, 1.5MB, 1.62MB, 1.75MB, 1.88MB, 2MB, 2.5MB, 3MB,
+4MB, 6MB, 8MB, 12MB, 24MB, 48MB
+```
+
+The F/2 half aligns this phase's own combined-footprint x-axis with Phases 2/3 (same F ticks);
+the F/4 half gives `saturation_blocks_by_size` an exact entry for every per-kernel size Phases
+2/3/4 look up (previously nearest-neighbour approximated).
 
 ## Layout
 
 ```
 src/phase1_bench.cu       CUDA benchmark: kernel, sweep, correctness check, CSV writer
 scripts/build.sh          nvcc build -> build/phase1_bench (gitignored)
-scripts/run.sh            locks clocks, runs the sweep, appends shared/env.md
+scripts/gen_sizes.py      prints ../../shared/size_grid.py::phase1_sizes_bytes() for --sizes
+scripts/run.sh            locks clocks, runs the sweep (shared-grid sizes), appends shared/env.md
 scripts/plot.py           results/phase1_results.csv -> results/plots/*.png
 scripts/derive_findings.py  results/phase1_results.csv -> findings.json + FINDINGS.md
 results/                  CSV + plots (committed)
@@ -46,7 +65,10 @@ trusting the numbers.
 
 **Not yet run on real hardware.** This environment (Windows dev machine) has no CUDA
 toolkit / Jetson device, so `src/phase1_bench.cu` could not be compiled or executed
-here — only reviewed for correctness against the prompt spec. `results/`,
+here — only reviewed for correctness against the prompt spec (including the new `--sizes`
+CLI arg and `scripts/gen_sizes.py`, `prompts/05_unified_size_grid_and_plots.md` Change 1 --
+verified off-device via `python3 scripts/gen_sizes.py`, which prints the expected 32
+comma-separated byte values). `results/`,
 `findings.json`, `FINDINGS.md`, and `../../shared/env.md` are intentionally **not**
 pre-populated with placeholder numbers: `derive_findings.py` computes every value
 directly from the measured CSV so nothing here is guessed. Run the three commands

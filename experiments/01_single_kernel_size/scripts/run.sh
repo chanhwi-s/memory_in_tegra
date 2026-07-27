@@ -22,7 +22,8 @@ sudo nvpmodel -m 0 || echo "WARNING: nvpmodel -m 0 failed (not on Jetson, or no 
 sudo jetson_clocks || echo "WARNING: jetson_clocks failed (not on Jetson, or no sudo) — continuing"
 
 echo "Running Phase 1 sweep..."
-"$BIN" --out "$PHASE_DIR/results/phase1_results.csv"
+SIZES="$(python3 "$SCRIPT_DIR/gen_sizes.py")"
+"$BIN" --out "$PHASE_DIR/results/phase1_results.csv" --sizes "$SIZES"
 
 # ---- shared/env.md: written once (header), appended every run (never rewritten) ----
 ENV_MD="$REPO_ROOT/shared/env.md"

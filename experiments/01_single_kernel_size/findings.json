@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "phase": "01_single_kernel_size",
-  "generated_utc": "2026-07-27T08:42:36Z",
+  "generated_utc": "2026-07-27T10:17:35Z",
   "source_csv": "experiments/01_single_kernel_size/results/phase1_results.csv",
   "env_ref": "shared/env.md",
   "results": {
@@ -33,5 +33,7 @@
     "reuse_crossover_note": "Reuse stops lifting achieved BW above DRAM peak once read_footprint_bytes >= 4194304 (~4.0 MB); below that, higher reuse_N pushes BW above the 179 GB/s measured DRAM peak via cache hits.",
     "compute_bound_observed": false
   },
-  "consumed": []
+  "consumed": [
+    "shared/size_grid.py"
+  ]
 }

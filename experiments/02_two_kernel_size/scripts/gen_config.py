@@ -26,6 +26,9 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PHASE_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
+sys.path.insert(0, os.path.join(REPO_ROOT, "shared"))
+import size_grid  # noqa: E402 -- shared/size_grid.py, the symmetric grid's source of truth
+
 PHASE1_DIR = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size")
 PHASE1_FINDINGS = os.path.join(PHASE1_DIR, "findings.json")
 PHASE1_CSV = os.path.join(PHASE1_DIR, "results", "phase1_results.csv")
@@ -98,13 +101,14 @@ def single_kernel_ref_GBps(df, size_bytes):
 
 def symmetric_sizes_bytes():
     """Per-kernel size S; combined read footprint for symmetric mode is 4*S (2*S per kernel,
-    two kernels). Densified so 4*S lands near L2=4MB and L2+SLC=8MB, i.e. S near 1MB and 2MB
-    (prompt: "Sweep S across the same tiers as Phase 1 ... per combined footprint of both
-    kernels")."""
-    return [
-        int(x * MiB) for x in
-        [0.125, 0.25, 0.5, 0.75, 0.875, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 3.0, 4.0, 6.0, 12.0, 24.0]
-    ]
+    two kernels). Thin wrapper over the shared grid (shared/size_grid.py ::
+    symmetric_per_kernel_sizes_bytes(), S = F/4) so Phase 2's and Phase 3's symmetric x-axes
+    are element-wise identical and line up with Phase 1's combined-footprint axis. The grid is
+    densified over combined footprint F = 1..4 MB, which brackets the *measured* effective
+    cache boundary (2MB, experiments/01_single_kernel_size/findings.json tier_steps) rather
+    than the nominal 4MB/8MB tiers this used to target -- see
+    prompts/05_unified_size_grid_and_plots.md Change 0."""
+    return size_grid.symmetric_per_kernel_sizes_bytes()
 
 
 def asymmetric_k1_sizes_bytes(k_bytes):

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "phase": "02_two_kernel_size",
-  "generated_utc": "2026-07-27T08:42:40Z",
+  "generated_utc": "2026-07-27T10:17:10Z",
   "source_csv": "experiments/02_two_kernel_size/results/phase2_results.csv",
   "env_ref": "shared/env.md",
   "results": {
@@ -40,6 +40,7 @@
     ]
   },
   "consumed": [
+    "shared/size_grid.py",
     "experiments/01_single_kernel_size/findings.json"
   ]
 }

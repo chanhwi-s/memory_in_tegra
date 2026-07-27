@@ -28,9 +28,14 @@ v3 is a **patch on top of v2** (keeps everything: in-context saturation, finding
   anchors now fall **exactly** on existing grid points at this resolution, so they're
   snapped in place (`is_anchor=True`, one cell, not a duplicate row like v2) instead of
   added as separate cells.
-- **Change 2 (power-of-2 axes):** every byte-size x-axis (`green_vs_shared.png`,
-  `delta_vs_size.png`) is now log **base 2** with human-readable power-of-two tick labels
-  (256K, 512K, 1M, ...) instead of matplotlib's default log10. `partition_sweep.png`'s
+  **(Superseded for the symmetric grid by `prompts/05_unified_size_grid_and_plots.md`
+  Change 2, see "Unified size grid" below — the symmetric small-end extension no longer
+  exists because the shared grid already starts at 32 KiB. The asymmetric extension above
+  is unchanged.)**
+- **Change 2 (power-of-2 axes):** every byte-size x-axis (`delta_vs_size.png`, and
+  `green_vs_shared.png` while it still existed) is now log **base 2** with human-readable
+  power-of-two tick labels (256K, 512K, 1M, ...) instead of matplotlib's default log10.
+  `partition_sweep.png`'s
   x-axis (the categorical SM split, e.g. "8:8") is untouched.
 - **Change 3 (reuse overlay, new + additive):** `scripts/sweep_reuse.py` re-measures a small
   representative subset of symmetric sizes (~4-5: the smallest/L1 point, both Phase 2
@@ -52,6 +57,24 @@ per-kernel size (32 KiB up to 24 MiB, symmetric + asymmetric) x SM partition rat
 (shared|green), with block counts saturated in context for every cell. Plus the optional
 reuse_N overlay described above.
 
+### Unified size grid (`prompts/05_unified_size_grid_and_plots.md`)
+
+The symmetric grid is `../../shared/size_grid.py::symmetric_per_kernel_sizes_bytes()` (S = F/4,
+24 points), reached via Phase 2's `symmetric_sizes_bytes()` — **identical** to Phase 2's grid,
+asserted so in `scripts/sweep.py::build_symmetric_sweep_sizes()`:
+
+```
+32KB, 64KB, 128KB, 256KB, 320KB, 384KB, 448KB, 512KB, 576KB, 640KB, 704KB, 768KB, 832KB,
+896KB, 960KB, 1MB, 1.25MB, 1.5MB, 2MB, 3MB, 4MB, 6MB, 12MB, 24MB
+```
+
+This is densified over combined footprint F = 1-4 MB (brackets the *measured* 2MB effective
+cache boundary, `../01_single_kernel_size/findings.json` `tier_steps`), replacing the old
+grid's "densified near nominal L2=4MB/L2+SLC=8MB" rationale. `consumed` in `findings.json`
+includes `shared/size_grid.py`. The asymmetric grid is unchanged (still Phase 2's
+`asymmetric_k1_sizes_bytes(k)` plus the small-end extension) and therefore not comparable
+point-for-point across phases.
+
 ## Layout
 
 ```
@@ -72,18 +95,35 @@ scripts/sweep_reuse.py  (v3 Change 3, new) reuse_N overlay driver: reads back re
                         at one check N, measures the subset x reuse_N grid, writes the
                         SEPARATE results/phase3_reuse_results.csv. Called automatically by
                         run.sh right after sweep.py (pass run.sh --skip-reuse to skip it).
-scripts/run_overlap_nsys.py  (prompts/03_green_context/03_verify_overlap_nsys.md, additive)
-                        selects the single peak-bandwidth test point per mode (symmetric,
-                        asymmetric) from results/phase3_results.csv, reconstructs its exact
-                        shared + best-green cells via --fixed-blocks0/1, profiles each under
+scripts/sweep_reuse32.py  (05_unified_size_grid_and_plots.md Change 5, new) full-grid
+                        reuse_N=32 overlay: every symmetric size (not just the ~4-5 subset
+                        above) x {shared, N=1-optimal green split (read back, NOT
+                        re-searched)} at a single fixed reuse_N=32. Reuses
+                        sweep_reuse.py's find_configs_for_size()/verify_stable_and_fix_blocks()
+                        so the selection logic matches exactly. Writes the SEPARATE
+                        results/phase3_reuse32_results.csv. Called automatically by run.sh
+                        right after sweep_reuse.py (pass run.sh --skip-reuse32 to skip it).
+scripts/run_overlap_nsys.py  (prompts/03_green_context/03_verify_overlap_nsys.md, additive;
+                        cell selection rewritten by 05_unified_size_grid_and_plots.md Change 6)
+                        selects, per mode (symmetric, asymmetric), the `shared`-only rows'
+                        FIRST LOCAL MAXIMUM of agg_GBps_median (sorted by swept size ascending
+                        -- the cache-bound peak, NOT the old global-argmax-over-all-configs,
+                        which degenerated to "largest size in the grid" for the symmetric
+                        sweep) plus its two grid neighbours (clamped at grid ends, falls back
+                        to global argmax with a loud WARNING if no local max exists) from
+                        results/phase3_results.csv, reconstructs each selected test point's
+                        exact shared + best-green cells via --fixed-blocks0/1 (3 test points x
+                        2 configs x 2 modes = 12 cells), profiles each under
                         `timeout 180 nsys profile -t cuda,nvtx --sample=none --cpuctxsw=none`,
                         extracts with `nsys stats --report {cuda_gpu_trace,nvtx_pushpop_trace}
                         --format csv` (NEVER `nsys export --type=sqlite`, which produces an
                         EMPTY database on this project's nsys 2025.6.3 -- confirmed on-device),
                         and writes the SEPARATE results/overlap_nsys.csv (verification-only --
-                        never read as throughput). Called automatically by run.sh right after
-                        the reuse overlay (pass run.sh --skip-nsys to skip it; also skipped
-                        automatically with a warning if `nsys`/`timeout` aren't on PATH).
+                        never read as throughput; includes a `failure_reason` column,
+                        Change 6, empty on success else `timeout` / `parse_error: <message>`).
+                        Called automatically by run.sh right after the reuse32 overlay (pass
+                        run.sh --skip-nsys to skip it; also skipped automatically with a
+                        warning if `nsys`/`timeout` aren't on PATH).
 scripts/parse_nsys_csv.py  small parser: finds the NVTX "measure" range (marked around only
                         the final measured-trial loop in src/phase3_bench.cu -- excludes
                         warmup and the in-context block-search, which otherwise dilute the
@@ -93,16 +133,23 @@ scripts/parse_nsys_csv.py  small parser: finds the NVTX "measure" range (marked 
                         distinct_greenctx (green: expect 2, confirming the SM split created
                         two separate green contexts). Also runnable standalone on one cell's
                         CSV pair.
-scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> a grouped bar chart
-                        (results/plots/overlap_ratio_vs_footprint_combined_footprint.png,
-                        mode x config, overlap_ratio as a labeled PERCENTAGE + 100%
-                        reference line -- not a line plot, since there are only 2
-                        x-positions/modes) plus results/overlap_nsys_table.md (same numbers as
-                        a markdown table). Both also surface each cell's EXACT profiled
-                        configuration (K0/K1 size, SM split, block counts, threads/block) --
-                        as per-bar annotations on the chart and as columns in the table.
-                        Degrades gracefully (a stderr NOTE, no crash) if run against an older
-                        overlap_nsys.csv from before those config columns existed.
+scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> a real LINE plot
+                        (results/plots/overlap_ratio_vs_footprint_combined_footprint.png, one
+                        panel per mode, shared vs green, overlap_ratio (%) vs combined read
+                        footprint [MB, log2] + a 100% reference line -- rewritten from a
+                        grouped bar chart by 05_unified_size_grid_and_plots.md Change 6: with
+                        only 1 test point per mode a line carried no trend information; with
+                        3 per mode (the cache-bound peak + its two neighbours) it finally can)
+                        plus results/overlap_nsys_table.md (same numbers as a markdown table).
+                        Both also surface each cell's EXACT profiled configuration (K0/K1
+                        size, SM split, block counts, threads/block) -- as per-point
+                        annotations on the chart (shared stacked above its marker, green
+                        below, so they never collide even when the two configs' overlap_ratio
+                        is close) and as columns in the table, plus a `failure_reason` column/
+                        annotation (Change 6: distinguishes an nsys timeout from a
+                        parse_nsys_csv failure -- both used to show as an undifferentiated
+                        N/A). Degrades gracefully (a stderr NOTE, no crash) if run against an
+                        older overlap_nsys.csv from before those columns existed.
 scripts/verify_overlap_nsys.sh  standalone entry point for just the nsys step (build if
                         stale, lock clocks, run_overlap_nsys.py, plot_overlap_nsys.py);
                         run.sh calls the same two Python scripts directly, this is for
@@ -112,10 +159,27 @@ scripts/run.sh          single entry point: locks clocks, runs sweep.py (reuse=1
                         run_overlap_nsys.py (nsys concurrency verification, best-effort),
                         plot.py, plot_overlap_nsys.py (if its CSV exists), derive_findings.py,
                         appends shared/env.md
-scripts/plot.py         results/phase3_results.csv -> results/plots/*.png (green_vs_shared,
-                        partition_sweep, delta_vs_size); ALSO reads the optional
+scripts/plot.py         results/phase3_results.csv -> results/plots/*.png (partition_sweep,
+                        delta_vs_size -- green_vs_shared.png was REMOVED,
+                        05_unified_size_grid_and_plots.md Change 4: it used k0_bytes alone as
+                        its x position, 4x off from actual combined cache pressure;
+                        green_vs_shared_combined_footprint_n32.png from
+                        scripts/plot_combined_footprint.py is the one remaining
+                        green-vs-shared figure); ALSO reads the optional
                         results/phase3_reuse_results.csv -> reuse_green_vs_shared.png if
                         present (skips cleanly with a note if sweep_reuse.py hasn't run yet)
+scripts/plot_combined_footprint.py  (05_unified_size_grid_and_plots.md Change 5) plots on the
+                        combined-read-footprint x-axis: results/phase3_results.csv (reuse_N=1)
+                        -> green_vs_shared_combined_footprint_n1.png (kept for reference, two
+                        panels: symmetric + asymmetric), and the SEPARATE
+                        results/phase3_reuse32_results.csv (scripts/sweep_reuse32.py,
+                        reuse_N=32) -> green_vs_shared_combined_footprint_n32.png -- the
+                        CANONICAL green-vs-shared figure (single panel, symmetric only; green
+                        split is each size's N=1-optimal split, held fixed, NOT re-searched at
+                        N=32 -- a conditional comparison, labeled as such on the figure). The
+                        n32 plot is skipped with a stderr NOTE if sweep_reuse32.py hasn't run
+                        yet; this never blocks the n1 plot. Called automatically by run.sh
+                        right after plot.py.
 scripts/derive_findings.py  results/phase3_results.csv -> findings.json + FINDINGS.md (v2
                         schema, unchanged); FINDINGS.md gets two new v3-only prose sections
                         ("Grid alignment with Phase 2", "Reuse overlay") that never touch
@@ -155,43 +219,54 @@ asymmetric sizes and Phase 2 anchors are in the plan.
 `scripts/sweep_reuse.py --dry-run` requires `results/phase3_results.csv` to already exist
 (it reads back the reuse=1 sweep's blocks/splits) but still makes **no device/binary calls**
 in dry-run mode -- the block-count stability check is skipped and the raw reuse=1 blocks are
-shown labeled `UNVERIFIED`.
+shown labeled `UNVERIFIED`. `scripts/sweep_reuse32.py --dry-run` has the same contract, over
+the FULL symmetric grid instead of the ~4-5 point subset.
 
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                 # everything: reuse=1 sweep + reuse_N overlay + nsys overlap
-                                # verification + plots + findings
-scripts/run.sh --skip-reuse    # skip the ~48-cell reuse_N overlay
-scripts/run.sh --skip-nsys     # skip the nsys concurrency verification
+scripts/run.sh                  # everything: reuse=1 sweep + reuse_N overlay + reuse_N=32
+                                 # full-grid overlay + nsys overlap verification + plots + findings
+scripts/run.sh --skip-reuse     # skip the ~48-cell reuse_N overlay
+scripts/run.sh --skip-reuse32   # skip the full-grid reuse_N=32 overlay (~36-72 cells)
+scripts/run.sh --skip-nsys      # skip the nsys concurrency verification
 ```
 
 `scripts/run.sh` is the single entry point: build (if needed) -> lock clocks -> `--check-api`
 -> sweep (`results/phase3_results.csv`) -> `--verify` (`results/partition_verification.txt`)
 -> **reuse_N overlay** (`scripts/sweep_reuse.py` -> `results/phase3_reuse_results.csv`;
 best-effort -- a failure here only warns and continues, since it's diagnostic-only and must
-not block the reuse=1 results) -> **nsys overlap verification**
-(`scripts/run_overlap_nsys.py` -> `results/overlap_nsys.csv`; also best-effort, and skipped
-automatically with a warning if `nsys`/`timeout` aren't installed -- only 4 cells now
-(peak-bandwidth point x {symmetric, asymmetric} x {shared, best-green}), cheap enough to run
-every time) -> plots (`results/plots/green_vs_shared.png`, `partition_sweep.png`,
-`delta_vs_size.png`, `reuse_green_vs_shared.png`, and
+not block the reuse=1 results) -> **full-grid reuse_N=32 overlay**
+(`scripts/sweep_reuse32.py` -> `results/phase3_reuse32_results.csv`; also best-effort) ->
+**nsys overlap verification** (`scripts/run_overlap_nsys.py` -> `results/overlap_nsys.csv`;
+also best-effort, and skipped automatically with a warning if `nsys`/`timeout` aren't
+installed -- 12 cells now (`05_unified_size_grid_and_plots.md` Change 6: the cache-bound
+local peak + its two neighbours, x {symmetric, asymmetric} x {shared, best-green}), cheap
+enough to run every time) -> plots (`results/plots/partition_sweep.png`, `delta_vs_size.png`,
+`reuse_green_vs_shared.png`, `green_vs_shared_combined_footprint_n1.png` and
+`green_vs_shared_combined_footprint_n32.png` (from `scripts/plot_combined_footprint.py` --
+the n32 one is the CANONICAL remaining green-vs-shared figure,
+`prompts/05_unified_size_grid_and_plots.md` Changes 4/5), and
 `overlap_ratio_vs_footprint_combined_footprint.png` if the nsys CSV exists) -> findings
-(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. Pass `--skip-reuse` and/or
-`--skip-nsys` to skip either diagnostic/verification step; the mandatory reuse=1 sweep always
-runs.
+(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. Pass `--skip-reuse`,
+`--skip-reuse32`, and/or `--skip-nsys` to skip any diagnostic/verification step; the
+mandatory reuse=1 sweep always runs.
 
 All scripts resolve their own paths, so they can be invoked from any working directory. The
 plot/findings steps need `pandas` + `matplotlib`; run `scripts/plot.py` /
-`scripts/derive_findings.py` / `scripts/sweep_reuse.py` directly only if you want to
-regenerate just one step from existing CSVs without re-running the rest.
+`scripts/plot_combined_footprint.py` / `scripts/derive_findings.py` / `scripts/sweep_reuse.py`
+/ `scripts/sweep_reuse32.py` directly only if you want to regenerate just one step from
+existing CSVs without re-running the rest.
 
 **This run is noticeably slower than the original Phase 3 run**: the widened/aligned sweep
 alone is ~5x more test points, and every cell runs an in-context block-count search (2 axes x
 up to 4 candidates x `kSearchTrials`=3, plus the final `--trials`=10 measurement) instead of a
 single fixed-block measurement. The reuse overlay adds another ~48 measurements (4-5 sizes x
-2 configs x 6 `reuse_N` values, each preceded by one stability-check search). Budget
-accordingly; use `--dry-run` on both scripts first to see the cell counts.
+2 configs x 6 `reuse_N` values, each preceded by one stability-check search). The full-grid
+reuse_N=32 overlay adds ~2x the symmetric grid size measurements (every symmetric size x
+{shared, best-green}, each a single N=32 launch group plus one stability-check search) --
+cheaper per cell than the 4-5-point overlay's per-N searches, but over the whole grid.
+Budget accordingly; use `--dry-run` on all three sweep scripts first to see the cell counts.
 
 ## Status
 
@@ -202,8 +277,9 @@ at the smallest asymmetric point, +8.5%, everywhere else neutral/negative — se
 `FINDINGS.md` for the full per-point breakdown).
 
 **v3's code changes (this revision) are implemented and unit-tested off-device** (grid
-generation verified via `--dry-run` against Phase 2's actual grid — 18 symmetric / 11
-asymmetric sizes, anchors snapped exactly once each at 786432/917504/2097152; `plot.py` and
+generation verified via `--dry-run` against Phase 2's actual grid — 24 symmetric / 11
+asymmetric sizes (unified size grid, `prompts/05_unified_size_grid_and_plots.md`), anchors
+snapped exactly once each at 917504/1048576/2097152; `plot.py` and
 `derive_findings.py` exercised end-to-end against synthetic CSV data matching the new grid +
 reuse-overlay schema) **but not yet re-run on the Jetson.** Development happens on a machine
 with no CUDA toolchain (no `nvcc`), so `phase3_bench.cu`'s reuse/fixed-blocks plumbing is not
@@ -211,6 +287,21 @@ compile-checked until built on the Jetson. Running `scripts/run.sh` on-device wi
 the committed v2 results with v3 numbers (expected; `FINDINGS.md`'s "Grid alignment with
 Phase 2" section will state the supersession, and the existing "Discrepancy vs the first Phase
 3 run" section is unaffected since it's about saturation methodology, not the grid).
+
+**`prompts/05_unified_size_grid_and_plots.md` (this revision, Changes 0-6): code-only, not yet
+re-run on the Jetson.** Same no-CUDA-toolchain constraint as above. Verified off-device:
+`shared/size_grid.py`'s asserts (24 F points, 32 Phase 1 sizes, all F divisible by 4 and
+131072 KB); `sweep.py --dry-run` (89 cells, 24 symmetric sizes, asymmetric K1 sizes
+byte-for-byte identical to the currently-committed `results/phase2_results.csv` /
+`phase3_results.csv` size columns); `run_overlap_nsys.py --dry-run` (12 cells, 3 test points
+per mode, cache-bound peak in the middle of each triple -- confirmed against the currently
+committed `phase3_results.csv`: symmetric peak is `sym_524288` at 182.0 GB/s / 2MB combined
+footprint, asymmetric peak is `asym_131072` at 212.9 GB/s, both matching the prompt's stated
+sanity check exactly); `plot.py` / `plot_combined_footprint.py` / `plot_overlap_nsys.py`
+regenerated cleanly against the existing (pre-unification) CSVs with `green_vs_shared.png`
+confirmed gone. `sweep_reuse32.py` and the Change-6 nsys re-measurement have not been run for
+real (need the Jetson) -- `results/phase3_reuse32_results.csv` does not exist yet, so
+`green_vs_shared_combined_footprint_n32.png` has not been generated from real N=32 data.
 
 Before trusting a v3 run on real hardware:
 - Run `phase3_bench --check-api` and confirm it reports the API as available before trusting
@@ -247,17 +338,39 @@ Before trusting a v3 run on real hardware:
 - **Phase-2-aligned size grid** (v3 Change 1, `scripts/sweep.py`): `symmetric_sizes_bytes()`
   and `asymmetric_k1_sizes_bytes(k)` are imported directly from
   `experiments/02_two_kernel_size/scripts/gen_config.py` (never re-derived with a different
-  ratio), prepended with a small-end extension (`[0.03125, 0.0625]` MiB / same fractions of
-  `k`). Phase 2's anchors are matched to their exact `(mode, k0_bytes, k1_bytes)` grid key and
-  tagged `is_anchor=True` **in place** -- if an anchor doesn't land on an exact grid point,
-  `sweep.py` exits loudly rather than silently snapping (that would indicate the grid
-  functions have drifted from Phase 2's, a bug to fix, not paper over).
+  ratio). The asymmetric grid is prepended with a small-end extension (`[0.03125, 0.0625]` x
+  `k`); the symmetric grid gets **no** extension as of
+  `prompts/05_unified_size_grid_and_plots.md` Change 2 -- the shared grid
+  (`shared/size_grid.py`, reached via Phase 2's `symmetric_sizes_bytes()`) already starts at
+  32 KiB (F=128KB), which is exactly what the old extension was adding, so removing it makes
+  Phase 2's and Phase 3's symmetric grids element-wise identical (real `assert` in
+  `build_symmetric_sweep_sizes()`, not just a comment). Phase 2's anchors are matched to their
+  exact `(mode, k0_bytes, k1_bytes)` grid key and tagged `is_anchor=True` **in place** -- if an
+  anchor doesn't land on an exact grid point, `sweep.py` exits loudly rather than silently
+  snapping (that would indicate the grid functions have drifted from Phase 2's, a bug to fix,
+  not paper over).
 - **Reuse_N overlay** (v3 Change 3, `scripts/sweep_reuse.py`): subset sizes are picked
   dynamically from the just-completed reuse=1 CSV (smallest symmetric size, the two
   `is_anchor` symmetric sizes, the size closest to 4 MiB) rather than hardcoded, so this still
   works if the grid changes upstream. Every point on the reuse curve (including `reuse_N=1`
   and the check N=4) is re-measured at the FINAL, stability-verified block counts for full
   self-consistency, rather than reusing the cheaper partial data already on hand.
+- **Full-grid reuse_N=32 overlay** (`05_unified_size_grid_and_plots.md` Change 5,
+  `scripts/sweep_reuse32.py`): why N=1 can't answer this -- at reuse_N=1 the aggregate curve
+  is dominated by cold-miss DRAM traffic, so green loses at every point; green's intended
+  mechanism (stabilized inter-launch L1 residency) only exists once there IS inter-launch
+  reuse. The existing 4-point overlay showed green's only win (+33.5% at `sym_32768`) and
+  worst loss (-26.0% at `sym_917504`) at N=32, but only at 4 points -- this script covers
+  every symmetric size instead. Cost control: only `shared` + the single green SM split
+  `scripts/sweep.py`'s reuse=1 run already found best for that size is measured (reused via
+  `scripts/sweep_reuse.py::find_configs_for_size()` -- the SAME "max `agg_GBps_median`
+  green row" selection `scripts/plot.py` / `scripts/plot_combined_footprint.py` already use),
+  never re-searched at N=32 -- so this is a **conditional** comparison (N=1-optimal split, not
+  necessarily N=32-optimal), called out on `green_vs_shared_combined_footprint_n32.png`'s
+  title. Block counts are held fixed across N exactly like the 4-point overlay
+  (`verify_stable_and_fix_blocks()`, reused verbatim). Writes the SEPARATE
+  `results/phase3_reuse32_results.csv`; never touches `results/phase3_results.csv`,
+  `results/phase3_reuse_results.csv`, or `findings.json`.
 - **Regime classification** (`scripts/derive_findings.py`): a point's regime
   (L1/scheduling-sensitive vs L2-resident vs L2+SLC-resident vs DRAM-bound) is computed from
   its **size alone** -- per-SM working set `2*S / PARTITION_SM_REF` (fixed reference of 8

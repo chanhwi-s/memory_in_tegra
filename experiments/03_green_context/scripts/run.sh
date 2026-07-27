@@ -16,21 +16,28 @@
 # --skip-reuse to run the reuse=1 main sweep only (the overlay is diagnostic-only and
 # adds ~48 extra measurements; see scripts/sweep.py / scripts/sweep_reuse.py --dry-run
 # to preview cell counts before running for real).
-# nsys overlap verification (prompts/03_green_context/03_verify_overlap_nsys.md): runs
-# after the main sweep, profiling just the peak-bandwidth cell per mode (4 cells total
-# -- cheap enough to run every time) to confirm the two kernels genuinely overlap on
-# the real execution timeline. Pass --skip-nsys to skip it (e.g. on a device without
-# nsys installed); a missing `nsys`/`timeout` is a non-fatal WARNING either way, same
-# as the sudo/reuse-overlay steps below, so it never aborts the rest of the run.
+# nsys overlap verification (prompts/03_green_context/03_verify_overlap_nsys.md, cell
+# selection updated by prompts/05_unified_size_grid_and_plots.md Change 6): runs after
+# the main sweep, profiling the cache-bound local peak + its two neighbours per mode
+# (12 cells total) to confirm the two kernels genuinely overlap on the real execution
+# timeline. Pass --skip-nsys to skip it (e.g. on a device without nsys installed); a
+# missing `nsys`/`timeout` is a non-fatal WARNING either way, same as the
+# sudo/reuse-overlay steps below, so it never aborts the rest of the run.
+# 05_unified_size_grid_and_plots.md Change 5: also runs a full-symmetric-grid reuse_N=32
+# overlay (scripts/sweep_reuse32.py, --skip-reuse32 to skip) feeding the CANONICAL
+# green_vs_shared_combined_footprint_n32.png (scripts/plot_combined_footprint.py); the
+# reuse_N=1 version is kept as green_vs_shared_combined_footprint_n1.png.
 set -euo pipefail
 
 RUN_REUSE_OVERLAY=1
+RUN_REUSE32_OVERLAY=1
 RUN_NSYS_OVERLAP=1
 for arg in "$@"; do
     case "$arg" in
         --skip-reuse) RUN_REUSE_OVERLAY=0 ;;
+        --skip-reuse32) RUN_REUSE32_OVERLAY=0 ;;
         --skip-nsys) RUN_NSYS_OVERLAP=0 ;;
-        *) echo "Unknown arg: $arg (supported: --skip-reuse, --skip-nsys)" >&2; exit 2 ;;
+        *) echo "Unknown arg: $arg (supported: --skip-reuse, --skip-reuse32, --skip-nsys)" >&2; exit 2 ;;
     esac
 done
 
@@ -71,6 +78,14 @@ else
     echo "Skipping reuse_N overlay (--skip-reuse)."
 fi
 
+if [ "$RUN_REUSE32_OVERLAY" -eq 1 ]; then
+    echo "Running Phase 3 full-grid reuse_N=32 overlay (05_unified_size_grid_and_plots.md Change 5; pass --skip-reuse32 to skip this)..."
+    python3 "$SCRIPT_DIR/sweep_reuse32.py" \
+        || echo "WARNING: sweep_reuse32.py failed -- continuing without green_vs_shared_combined_footprint_n32.png (the n1 version and all other results/findings are unaffected)"
+else
+    echo "Skipping full-grid reuse_N=32 overlay (--skip-reuse32)."
+fi
+
 if [ "$RUN_NSYS_OVERLAP" -eq 1 ]; then
     if command -v nsys >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
         echo "Verifying concurrent overlap with nsys (peak-bandwidth cell per mode; pass --skip-nsys to skip this)..."
@@ -85,6 +100,8 @@ fi
 
 echo "Generating plots..."
 python3 "$SCRIPT_DIR/plot.py"
+python3 "$SCRIPT_DIR/plot_combined_footprint.py" \
+    || echo "WARNING: plot_combined_footprint.py failed -- continuing"
 if [ -f "$PHASE_DIR/results/overlap_nsys.csv" ]; then
     python3 "$SCRIPT_DIR/plot_overlap_nsys.py" \
         || echo "WARNING: plot_overlap_nsys.py failed -- continuing"
@@ -123,6 +140,9 @@ echo "Done."
 echo "  CSV:           $PHASE_DIR/results/phase3_results.csv"
 if [ "$RUN_REUSE_OVERLAY" -eq 1 ]; then
     echo "  Reuse CSV:     $PHASE_DIR/results/phase3_reuse_results.csv (diagnostic-only; see --skip-reuse)"
+fi
+if [ "$RUN_REUSE32_OVERLAY" -eq 1 ]; then
+    echo "  Reuse32 CSV:   $PHASE_DIR/results/phase3_reuse32_results.csv (feeds green_vs_shared_combined_footprint_n32.png; see --skip-reuse32)"
 fi
 if [ -f "$PHASE_DIR/results/overlap_nsys.csv" ]; then
     echo "  nsys overlap:  $PHASE_DIR/results/overlap_nsys.csv (verification-only; see --skip-nsys)"

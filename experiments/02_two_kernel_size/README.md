@@ -11,13 +11,28 @@ concurrently on two CUDA streams, reuse N=1 (the main sweep does not sweep reuse
 add-on does, see "v2 add-on: reuse-sweep overlay" below). Green context and zero copy are OFF for
 the whole phase.
 
-- **2a symmetric:** K0 and K1 both size S, S swept so combined read footprint (`2*S + 2*S = 4*S`)
-  densifies near L2 (4 MB) and L2+SLC (8 MB).
+- **2a symmetric:** K0 and K1 both size S = F/4, where F (combined read footprint = `4*S`) comes
+  from the shared grid `../../shared/size_grid.py::symmetric_per_kernel_sizes_bytes()` (24 points;
+  densified over F = 1-4 MB, which brackets the *measured* effective cache boundary at F=2MB —
+  see `../01_single_kernel_size/findings.json` `tier_steps` — not the nominal 4MB/8MB tiers this
+  used to target). This is also Phase 3's exact symmetric grid (`00_conventions.md` §2.2
+  provenance: consumed = `shared/size_grid.py`); asserted identical in
+  `../03_green_context/scripts/sweep.py::build_symmetric_sweep_sizes()`.
 - **2b asymmetric:** K0 fixed at 1 MB, K1 swept up to and past `k`, the cache-overflow /
-  bound-crossover point from Phase 1.
+  bound-crossover point from Phase 1. **Unchanged** by the shared-grid unification
+  (`prompts/05_unified_size_grid_and_plots.md` explicitly leaves the asymmetric grid untouched).
 
 Goal: find the **contention onset** — where aggregate throughput falls below the ideal 2x
 (perfect scaling) — which Phases 3 and 4 will target.
+
+### Symmetric size grid (from `../../shared/size_grid.py`)
+
+```
+32KB, 64KB, 128KB, 256KB, 320KB, 384KB, 448KB, 512KB, 576KB, 640KB, 704KB, 768KB, 832KB,
+896KB, 960KB, 1MB, 1.25MB, 1.5MB, 2MB, 3MB, 4MB, 6MB, 12MB, 24MB
+```
+(S = F/4 for each F in `combined_footprint_grid_bytes()`; 24 values — see that module's
+docstring for the full F grid and rationale.) The asymmetric grid is separate and unchanged.
 
 ## Dependency on Phase 1
 
@@ -105,6 +120,14 @@ failing, so re-run it with proper privileges on the real device before trusting 
 **Main sweep (2a/2b, reuse=1): run on real hardware.** `results/phase2_results.csv`,
 `findings.json`, and `FINDINGS.md` contain real measured numbers (see git history) — this is no
 longer the "not yet run" placeholder state described in earlier revisions of this file.
+
+**Unified size grid (`prompts/05_unified_size_grid_and_plots.md`): code-only, not yet re-run.**
+`symmetric_sizes_bytes()` now wraps `../../shared/size_grid.py` (24 sizes, up from 16) --
+verified off-device via `python3 scripts/gen_config.py` (33 planned cells: 24 symmetric + 9
+asymmetric, asymmetric byte-for-byte identical to the currently-committed
+`results/phase2_results.csv`'s asymmetric `k1_bytes` values). The committed
+`results/phase2_results.csv` / `findings.json` still reflect the OLD 16-size symmetric grid
+until this phase is re-run on the Jetson.
 
 **v2 reuse-overlay add-on: implemented, not yet run on hardware.** This development environment
 has no CUDA toolchain / Jetson device (checked: no `nvcc` on PATH here), so the `--reuse-out`

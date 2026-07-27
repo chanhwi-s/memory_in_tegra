@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Phase 3 v3 sweep driver: shared vs green-context, across a per-kernel size
-sweep ALIGNED to Phase 2's own grid (plus a small-end extension), across SM
-partition ratios. Runnable from anywhere.
+sweep ALIGNED to Phase 2's own grid (symmetric: identical, no extension; asymmetric:
+plus a small-end extension), across SM partition ratios. Runnable from anywhere.
 
 v3 changes vs v2 (prompts/03_green_context_v3.md Change 1 -- Changes 2/3 live in
 scripts/plot.py and scripts/sweep_reuse.py respectively):
@@ -12,7 +12,13 @@ scripts/plot.py and scripts/sweep_reuse.py respectively):
     `asymmetric_k1_sizes_bytes(k)` functions (imported directly from
     experiments/02_two_kernel_size/scripts/gen_config.py, not re-derived) so
     the two phases' grids can never drift apart again, prepending a small-end
-    extension so the green-context L1/scheduling regime is still covered.
+    extension (asymmetric only) so the green-context L1/scheduling regime is
+    still covered.
+  - (05_unified_size_grid_and_plots.md Change 2) The symmetric small-end
+    extension was later removed: the shared grid (shared/size_grid.py, reached
+    via Phase 2's symmetric_sizes_bytes()) already starts at F=128KB (S=32KB),
+    so Phase 2's and Phase 3's symmetric grids are now element-wise identical
+    (asserted in build_symmetric_sweep_sizes()), not "Phase 3 superset of Phase 2".
   - Phase 2's 3 roofline anchors (786432, 917504 symmetric; 2097152 asymmetric)
     now fall EXACTLY on grid points at this resolution, so anchor tagging is an
     exact-match snap onto an EXISTING grid cell (is_anchor=True set in place),
@@ -92,12 +98,14 @@ sys.path.insert(0, PHASE2_SCRIPTS_DIR)
 import gen_config as phase2_gen_config  # noqa: E402 (import after sys.path.insert by design)
 
 MiB = 1024 * 1024
-# Small-end extension (prompts/03_green_context_v3.md Change 1): Phase 2's grids
-# start at 0.125 MiB (symmetric) / 0.125*k (asymmetric), which never reaches the
-# green-context L1/scheduling regime (per-SM working set near 192 KB/SM). Prepend
-# these so that regime is still resolved; everything above is Phase 2's own list,
-# untouched.
-SMALL_END_SYMMETRIC_MIB = [0.03125, 0.0625]          # 32 KiB, 64 KiB
+# Small-end extension (prompts/03_green_context_v3.md Change 1): Phase 2's asymmetric
+# grid starts at 0.125*k, which never reaches the green-context L1/scheduling regime
+# (per-SM working set near 192 KB/SM). Prepend these so that regime is still resolved.
+# (05_unified_size_grid_and_plots.md Change 2: the SYMMETRIC small-end extension was
+# removed -- the shared grid (shared/size_grid.py, via Phase 2's symmetric_sizes_bytes())
+# already starts at F=128KB / S=32KB, which is exactly what that extension was adding.
+# This is what makes Phase 2's and Phase 3's symmetric grids identical rather than
+# "Phase 3 superset of Phase 2". The asymmetric extension is unchanged / out of scope.)
 SMALL_END_ASYMMETRIC_K1_FRACS = [0.03125, 0.0625]    # same fractions, applied to k
 
 ASYMMETRIC_K0_FIXED_BYTES = 1 * 1024 * 1024
@@ -109,10 +117,18 @@ DEFAULT_ASYMMETRIC_K_BYTES = 2 * 1024 * 1024
 
 
 def build_symmetric_sweep_sizes():
-    """Phase 2's exact symmetric per-kernel size grid
-    (`gen_config.symmetric_sizes_bytes()`) plus the small-end extension."""
-    small = [int(round(x * MiB)) for x in SMALL_END_SYMMETRIC_MIB]
-    return small + phase2_gen_config.symmetric_sizes_bytes()
+    """Phase 2's exact symmetric per-kernel size grid (`gen_config.symmetric_sizes_bytes()`,
+    itself a thin wrapper over shared/size_grid.py::symmetric_per_kernel_sizes_bytes()) --
+    no small-end extension anymore (05_unified_size_grid_and_plots.md Change 2), so this is
+    now IDENTICAL to Phase 2's grid, not a superset of it. Asserted below, not just commented."""
+    phase3_sym_grid = list(phase2_gen_config.symmetric_sizes_bytes())
+    phase2_sym_grid = list(phase2_gen_config.symmetric_sizes_bytes())
+    assert phase2_sym_grid == phase3_sym_grid, (
+        "Phase 2 and Phase 3 symmetric grids diverged -- both must come from "
+        "shared/size_grid.py::symmetric_per_kernel_sizes_bytes() via gen_config.symmetric_sizes_bytes() "
+        "with no per-phase extension (05_unified_size_grid_and_plots.md Change 2)"
+    )
+    return phase3_sym_grid
 
 
 def build_asymmetric_k1_sizes(k_bytes):

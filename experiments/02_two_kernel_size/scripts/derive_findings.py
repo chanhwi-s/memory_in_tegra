@@ -58,7 +58,7 @@ def main():
     sym = df[df["mode"] == "symmetric"].copy()
     asym = df[df["mode"] == "asymmetric"].copy()
 
-    consumed = []
+    consumed = ["shared/size_grid.py"]
     if os.path.exists(PHASE1_FINDINGS_PATH):
         consumed.append(PHASE1_FINDINGS_REL)
 
@@ -172,6 +172,16 @@ def main():
 Generated {findings['generated_utc']} from `{findings['source_csv']}`. All numbers below are
 computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not hand-edit)
 if the CSV is regenerated. Consumed upstream: {', '.join(consumed) if consumed else 'none (Phase 1 findings.json not available yet)'}.
+
+## Size grid (`prompts/05_unified_size_grid_and_plots.md`)
+
+The symmetric x-axis (`symmetric_sizes_bytes()` in `scripts/gen_config.py`) is now the shared
+combined-read-footprint grid (`shared/size_grid.py::symmetric_per_kernel_sizes_bytes()`, S = F/4,
+24 points) -- densified over combined footprint F = 1-4 MB, which brackets the *measured*
+effective cache boundary (Phase 1's `tier_steps`) rather than the nominal 4MB/8MB tiers this
+grid used to target. It is identical to Phase 3's symmetric grid (asserted in
+`experiments/03_green_context/scripts/sweep.py`). The asymmetric grid is unchanged and
+therefore still not comparable point-for-point against other phases.
 
 ## 2a — Symmetric contention onset (worst measured contention, i.e. the local minimum of scaling_efficiency)
 

@@ -1,16 +1,16 @@
 # Phase 3 v3 Findings — Green Context, In-Context Saturation + Phase-2-Aligned Size Sweep
 
-Generated 2026-07-27T08:43:27Z from `experiments/03_green_context/results/phase3_results.csv`. All numbers below
+Generated 2026-07-27T10:05:33Z from `experiments/03_green_context/results/phase3_results.csv`. All numbers below
 are computed directly from that CSV by `scripts/derive_findings.py` -- re-run it (do not
 hand-edit) if the CSV is regenerated. See `prompts/03_green_context_v3.md` (building on
 `_v2.md`) for the full methodology; this supersedes the original Phase 3 run
 (`prompts/03_green_context.md`) and v2's independently-gridded re-run.
 
-Upstream consumed: experiments/01_single_kernel_size/findings.json, experiments/02_two_kernel_size/findings.json
+Upstream consumed: shared/size_grid.py, experiments/01_single_kernel_size/findings.json, experiments/02_two_kernel_size/findings.json
 
 ## Grid alignment with Phase 2 (v3 Change 1)
 
-This run's symmetric per-kernel size grid (18 sizes) is Phase 2's own grid (`experiments/02_two_kernel_size/scripts/gen_config.py:symmetric_sizes_bytes()`) plus a small-end extension (32 KiB, 64 KiB) for the L1/scheduling regime, imported directly rather than re-derived -- so Phase 1/2/3 curves now sit at the SAME x positions and are directly overlayable. This supersedes v2's independent 1.8x geometric grid (65536, 117965, 212337, ...), which only coincided with Phase 2 at the 3 anchor points. Sizes (bytes): 32,768, 65,536, 131,072, 262,144, 524,288, 786,432, 917,504, 1,048,576, 1,310,720, 1,572,864, 1,835,008, 2,097,152, 2,359,296, 3,145,728, 4,194,304, 6,291,456, 12,582,912, 25,165,824.
+This run's symmetric per-kernel size grid (18 sizes) is Phase 2's own grid (`experiments/02_two_kernel_size/scripts/gen_config.py:symmetric_sizes_bytes()`, itself `shared/size_grid.py::symmetric_per_kernel_sizes_bytes()`), imported directly rather than re-derived, with NO per-phase extension -- so this grid is element-wise IDENTICAL to Phase 2's (asserted in scripts/sweep.py), and Phase 1/2/3 curves sit at the SAME x positions and are directly overlayable. The shared grid is densified over combined footprint F = 1-4 MB (the *measured* effective cache boundary, not the nominal 4MB/8MB tiers this grid used to target). This supersedes v2's independent 1.8x geometric grid (65536, 117965, 212337, ...), which only coincided with Phase 2 at the 3 anchor points, and the v3-era small-end extension (32 KiB, 64 KiB), which the shared grid's own 32 KiB floor made redundant. Sizes (bytes): 32,768, 65,536, 131,072, 262,144, 524,288, 786,432, 917,504, 1,048,576, 1,310,720, 1,572,864, 1,835,008, 2,097,152, 2,359,296, 3,145,728, 4,194,304, 6,291,456, 12,582,912, 25,165,824.
 
 ## Change 1 sanity gate (block-count saturation)
 
@@ -118,6 +118,13 @@ At least one subset size shows green's delta improving with reuse_N (the predict
 - **reuse_sym_32768** (32,768 B/kernel): delta @ reuse_N=1 = +0.30%, @ reuse_N=32 = +33.51% -- delta improves with reuse (still not a win)
 - **reuse_sym_4194304** (4,194,304 B/kernel): delta @ reuse_N=1 = -2.83%, @ reuse_N=32 = -2.67% -- flat/no improvement with reuse
 - **reuse_sym_917504** (917,504 B/kernel): delta @ reuse_N=1 = -5.08%, @ reuse_N=32 = -25.98% -- flat/no improvement with reuse
+
+## Full-grid reuse_N=32 overlay (05_unified_size_grid_and_plots.md Change 5 -- diagnostic
+only, does NOT feed findings.json / Phase 4; feeds green_vs_shared_combined_footprint_n32.png)
+
+Rationale: at reuse_N=1 the aggregate curve is dominated by cold-miss DRAM traffic and green loses at every point -- the mechanism green is supposed to exploit (stabilized inter-launch L1 residency) only exists when there IS inter-launch reuse. The existing 4-point overlay (see "Reuse overlay" above) showed green's only win (+33.5% at sym_32768) and its worst loss (-26.0% at sym_917504) at N=32, so this full-grid N=32 curve is the figure that actually maps green's useful range.
+
+Not run this session -- `results/phase3_reuse32_results.csv` does not exist. Run `scripts/sweep_reuse32.py` (after `scripts/sweep.py`) to generate the full-grid reuse_N=32 overlay and re-run this script to fill in this section.
 
 ## Verification (00_conventions.md / prompt Verification section)
 

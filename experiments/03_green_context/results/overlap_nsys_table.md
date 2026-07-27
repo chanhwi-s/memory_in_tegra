@@ -1,6 +1,6 @@
 # Phase 3 nsys overlap verification -- summary table
 
-One row per (mode, config) at that mode's peak-bandwidth test point (scripts/run_overlap_nsys.py). Verification-only -- not throughput. K0/K1/SM-split/blocks/threads-per-block are the EXACT configuration that cell was profiled at (reconstructed via --fixed-blocks0/1 from the matching results/phase3_results.csv row).
+One row per (mode, config) at that mode's cache-bound local peak + its two grid neighbours (scripts/run_overlap_nsys.py, 05_unified_size_grid_and_plots.md Change 6). Verification-only -- not throughput. K0/K1/SM-split/blocks/threads-per-block are the EXACT configuration that cell was profiled at (reconstructed via --fixed-blocks0/1 from the matching results/phase3_results.csv row).
 
 | Test point | Mode | Config | Overlap % | Kernels in window | Distinct GreenCtx | K0 size | K1 size | SM split (K0:K1) | Blocks (K0:K1) | Threads/block | Combined footprint (MB) |
 |---|---|---|---|---|---|---|---|---|---|---|---|

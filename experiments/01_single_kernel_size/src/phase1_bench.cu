@@ -194,18 +194,47 @@ static bool checkCorrectness(const float* dC, size_t n_elems) {
     return true;
 }
 
+static std::vector<size_t> parseSizesArg(const std::string& csv) {
+    std::vector<size_t> out;
+    size_t start = 0;
+    while (start <= csv.size()) {
+        size_t comma = csv.find(',', start);
+        std::string tok = trim(csv.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (!tok.empty()) out.push_back(static_cast<size_t>(std::stoull(tok)));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
+}
+
 int main(int argc, char** argv) {
     std::string outPath = "results/phase1_results.csv";
+    std::string sizesArg;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--out" && i + 1 < argc) outPath = argv[++i];
+        if (std::string(argv[i]) == "--sizes" && i + 1 < argc) sizesArg = argv[++i];
     }
 
-    const std::vector<size_t> sizesBytes = {
+    // Fallback list -- only used when --sizes is not supplied, so the binary is still
+    // runnable standalone. Prefer shared/size_grid.py::phase1_sizes_bytes() via
+    // scripts/gen_sizes.py / scripts/run.sh (prompts/05_unified_size_grid_and_plots.md Change 1).
+    const std::vector<size_t> fallbackSizesBytes = {
         32ull * 1024,        64ull * 1024,        128ull * 1024,       256ull * 1024,
         512ull * 1024,       1ull * 1024 * 1024,  2ull * 1024 * 1024,  3ull * 1024 * 1024,
         4ull * 1024 * 1024,  6ull * 1024 * 1024,  8ull * 1024 * 1024,  12ull * 1024 * 1024,
         16ull * 1024 * 1024, 24ull * 1024 * 1024, 48ull * 1024 * 1024, 96ull * 1024 * 1024,
     };
+    std::vector<size_t> sizesBytes;
+    if (!sizesArg.empty()) {
+        sizesBytes = parseSizesArg(sizesArg);
+        std::sort(sizesBytes.begin(), sizesBytes.end());
+    } else {
+        fprintf(stderr,
+                "WARNING: --sizes not given, using hardcoded fallback size list "
+                "(not the shared/size_grid.py grid). Pass --sizes to use the shared grid.\n");
+        sizesBytes = fallbackSizesBytes;
+    }
+
     const std::vector<int> reuseNs = {1, 2, 4, 8, 16, 32};
     const std::vector<int> blockCounts = {16, 32, 64, 128, 256, 512, 1024};
     const int kThreadsPerBlockDefault = 256;

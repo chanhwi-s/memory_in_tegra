@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Phase 3 -- combined-footprint plot (additive; prompts/03_green_context/03_combined_footprint_plot.md).
+"""Phase 3 -- combined-footprint plot (prompts/03_green_context/03_combined_footprint_plot.md,
+extended by prompts/05_unified_size_grid_and_plots.md Change 5).
 
 Re-plots Phase 3 on the unified combined-read-footprint x-axis instead of
 per-kernel size, so Phase 3 lands directly on top of Phase 2/1 where they
@@ -14,13 +15,25 @@ C = A + B -> num_input_buffers = 2 (A, B; C is written, not read).
 Phase 3 has 2 concurrent kernels -> combined_read_footprint_bytes =
     2 * k0_bytes + 2 * k1_bytes
 
-Additive only: reads existing results/*.csv, writes new results/plots/*_combined_footprint.png.
+Reads existing results/*.csv, writes new results/plots/*_combined_footprint*.png.
 Does not touch results/*.csv, findings.json, or scripts/plot.py.
 
 symmetric/asymmetric are plotted as two side-by-side panels (same layout as
-scripts/plot.py's plot_green_vs_shared) rather than merged onto one panel --
-merging them onto a single combined-footprint axis was tried first but reads
-worse than keeping the two-panel layout readers already know from plot.py.
+scripts/plot.py's old plot_green_vs_shared, since removed -- 05_unified_size_grid_and_plots.md
+Change 4) rather than merged onto one panel -- merging them onto a single combined-footprint
+axis was tried first but reads worse than keeping the two-panel layout.
+
+Change 5 (05_unified_size_grid_and_plots.md): the headline green-vs-shared combined-footprint
+figure is a MEASUREMENT change, not just a plot change. At reuse_N=1 the aggregate curve is
+dominated by cold-miss DRAM traffic and green loses everywhere -- green's intended mechanism
+(stabilized inter-launch L1 residency) only exists when there IS inter-launch reuse. So the
+canonical `green_vs_shared_combined_footprint_n32.png` is now drawn from
+results/phase3_reuse32_results.csv (scripts/sweep_reuse32.py: full symmetric grid, reuse_N=32,
+shared + the N=1-optimal green split held fixed -- NOT re-searched at N=32, so this is a
+*conditional* comparison, labeled as such on the figure). The reuse_N=1 version is KEPT as
+`green_vs_shared_combined_footprint_n1.png` (from results/phase3_results.csv, unchanged data/
+logic) so the phase can still show both; nothing is silently dropped. Both are skipped
+independently with a stderr NOTE if their source CSV doesn't exist yet.
 """
 import json
 import os
@@ -37,6 +50,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PHASE_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
 CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
+REUSE32_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse32_results.csv")
 PLOTS_DIR = os.path.join(PHASE_DIR, "results", "plots")
 PHASE1_FINDINGS = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size", "findings.json")
 
@@ -105,6 +119,20 @@ def load_main():
     return df
 
 
+def load_reuse32():
+    """Change 5: full symmetric grid at reuse_N=32 (scripts/sweep_reuse32.py).
+    Returns None (with a stderr NOTE) if that CSV doesn't exist yet -- this figure
+    is independent of, and does not block, the reuse_N=1 figure below."""
+    if not os.path.exists(REUSE32_CSV_PATH):
+        print(f"NOTE: {REUSE32_CSV_PATH} not found -- skipping "
+              f"green_vs_shared_combined_footprint_n32.png (run scripts/sweep_reuse32.py "
+              f"to generate it).", file=sys.stderr)
+        return None
+    df = pd.read_csv(REUSE32_CSV_PATH)
+    df["combined_footprint_mb"] = combined_footprint_mb(df)
+    return df
+
+
 def _point_summary(df):
     """One row per test_point_id (both modes merged -- that's the point of the
     unified x-axis): combined footprint, shared agg GB/s, best-green agg GB/s."""
@@ -127,11 +155,12 @@ def _point_summary(df):
     return pd.DataFrame(rows).sort_values("combined_footprint_mb") if rows else pd.DataFrame(columns=cols)
 
 
-def plot_green_vs_shared_combined_footprint(df, cache_boundary_mb, dram_peak_gbps):
-    """Aggregate GB/s vs combined read footprint (MB, log2), shared vs green --
-    one panel per mode (symmetric, asymmetric), same two-panel layout as
-    scripts/plot.py's plot_green_vs_shared, just with the combined-footprint
-    x-axis instead of per-kernel size."""
+def plot_green_vs_shared_combined_footprint_n1(df, cache_boundary_mb, dram_peak_gbps):
+    """reuse_N=1 version (Change 5: kept, named unambiguously -- this is NOT the
+    canonical green-vs-shared figure anymore, see plot_..._n32 below). Aggregate
+    GB/s vs combined read footprint (MB, log2), shared vs green -- one panel per
+    mode (symmetric, asymmetric), same two-panel layout as scripts/plot.py's old
+    plot_green_vs_shared (removed, Change 4)."""
     s = _point_summary(df)
     if s.empty:
         sys.exit("No shared-baseline rows found in phase3_results.csv -- nothing to plot")
@@ -152,9 +181,42 @@ def plot_green_vs_shared_combined_footprint(df, cache_boundary_mb, dram_peak_gbp
         ax.grid(True, which="both", alpha=0.3)
         ax.legend(fontsize=8)
     axes[0].set_ylabel("Aggregate achieved bandwidth (GB/s)")
-    fig.suptitle("Shared vs best-green aggregate throughput vs combined read footprint")
+    fig.suptitle("Shared vs best-green aggregate throughput vs combined read footprint (reuse_N=1)")
     fig.tight_layout()
-    out = os.path.join(PLOTS_DIR, "green_vs_shared_combined_footprint.png")
+    out = os.path.join(PLOTS_DIR, "green_vs_shared_combined_footprint_n1.png")
+    fig.savefig(out, dpi=150)
+    print(f"wrote {out}")
+
+
+def plot_green_vs_shared_combined_footprint_n32(df32, cache_boundary_mb, dram_peak_gbps):
+    """Change 5 (05_unified_size_grid_and_plots.md): the CANONICAL green-vs-shared
+    combined-footprint figure -- full symmetric grid, reuse_N=32
+    (results/phase3_reuse32_results.csv, scripts/sweep_reuse32.py). Single panel
+    (symmetric only -- Change 5 does not sweep the asymmetric grid at N=32).
+    The green series uses each size's reuse_N=1-optimal SM split, held fixed and
+    NOT re-searched at N=32 -- a CONDITIONAL comparison, called out in the title
+    and axis label so it is never mistaken for an N=32-optimal search."""
+    s = _point_summary(df32)
+    s = s[s["mode"] == "symmetric"]
+    if s.empty:
+        print("NOTE: no symmetric rows in phase3_reuse32_results.csv -- skipping "
+              "green_vs_shared_combined_footprint_n32.png", file=sys.stderr)
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(s.combined_footprint_mb, s.shared_agg_GBps, marker="o",
+             color="tab:blue", label="shared (baseline)")
+    ax.plot(s.combined_footprint_mb, s.best_green_agg_GBps, marker="s",
+             color="tab:green", label="green (N=1-optimal split, fixed)")
+    _draw_reference_lines(ax, cache_boundary_mb, dram_peak_gbps)
+    _set_log2_mb_axis(ax)
+    ax.set_ylabel("Aggregate achieved bandwidth (GB/s)")
+    ax.set_title("Phase 3: symmetric, reuse_N=32 (green split = N=1-optimal, NOT re-searched)")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.suptitle("Shared vs best-green aggregate throughput vs combined read footprint (reuse_N=32, conditional)")
+    fig.tight_layout()
+    out = os.path.join(PLOTS_DIR, "green_vs_shared_combined_footprint_n32.png")
     fig.savefig(out, dpi=150)
     print(f"wrote {out}")
 
@@ -163,7 +225,10 @@ def main():
     os.makedirs(PLOTS_DIR, exist_ok=True)
     cache_boundary_mb, dram_peak_gbps = load_reference_lines()
     df = load_main()
-    plot_green_vs_shared_combined_footprint(df, cache_boundary_mb, dram_peak_gbps)
+    plot_green_vs_shared_combined_footprint_n1(df, cache_boundary_mb, dram_peak_gbps)
+    df32 = load_reuse32()
+    if df32 is not None:
+        plot_green_vs_shared_combined_footprint_n32(df32, cache_boundary_mb, dram_peak_gbps)
 
 
 if __name__ == "__main__":

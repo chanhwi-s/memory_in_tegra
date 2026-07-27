@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Phase 3 -- verify concurrent overlap with nsys (prompts/03_green_context/03_verify_overlap_nsys.md).
 # VERIFICATION ONLY: confirms the two kernels really run concurrently, on the actual
-# execution timeline, for the cells that appear in scripts/plot.py's green_vs_shared.png
-# (shared + best-green, at the single peak-bandwidth test point per mode -- read from the
-# already-measured results/phase3_results.csv, NOT the full sweep; see
-# scripts/run_overlap_nsys.py). Needs results/phase3_results.csv
+# execution timeline, for the cells around the cache-bound local peak + its two neighbours
+# (shared + best-green, per mode -- read from the already-measured results/phase3_results.csv,
+# NOT the full sweep; see scripts/run_overlap_nsys.py). Needs results/phase3_results.csv
 # and the built binary to already exist (run scripts/run.sh first).
 # Does NOT touch results/phase3_results.csv, findings.json, or scripts/plot.py -- writes
 # only results/overlap_nsys.csv and results/plots/overlap_ratio_vs_footprint_combined_footprint.png.
