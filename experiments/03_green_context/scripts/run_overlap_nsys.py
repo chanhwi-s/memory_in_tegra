@@ -64,13 +64,18 @@ CSV_PATH = os.path.join(PHASE_DIR, "results", "overlap_nsys.csv")
 sys.path.insert(0, SCRIPT_DIR)
 import parse_nsys_csv  # noqa: E402
 
-# Column order for the new CSV (prompts/03_green_context/03_verify_overlap_nsys.md).
+# Column order for the new CSV (prompts/03_green_context/03_verify_overlap_nsys.md
+# columns first, in the order it specifies; sm_split_k0..threads_per_block appended
+# at the end -- user request: make each of the 4 cells' exact configuration
+# (kernel sizes, block counts, SM split) visible without cross-referencing
+# results/phase3_results.csv by hand).
 CSV_FIELDS = [
     "test_point_id", "mode", "config", "k0_bytes", "k1_bytes",
     "combined_read_footprint_bytes",
     "kernel_instances_in_window", "distinct_greenctx",
     "union_busy_ms", "concurrent_ms", "overlap_ratio",
     "gpu_clock_mhz", "power_mode", "soc_temp_c", "cuda_version", "driver_version",
+    "sm_split_k0", "sm_split_k1", "blocks_k0", "blocks_k1", "threads_per_block",
 ]
 CSV_HEADER = ",".join(CSV_FIELDS)
 
@@ -175,6 +180,13 @@ def profile_cell(row, tmp_dir):
         "gpu_clock_mhz": row.gpu_clock_mhz, "power_mode": row.power_mode,
         "soc_temp_c": row.soc_temp_c, "cuda_version": row.cuda_version,
         "driver_version": row.driver_version,
+        # Exact configuration this cell was profiled at (straight from the
+        # phase3_results.csv row cell_args() reconstructed the invocation
+        # from) -- so the CSV/table/chart never need a manual cross-reference
+        # back to phase3_results.csv to see what was actually measured.
+        "sm_split_k0": int(row.sm_split_k0), "sm_split_k1": int(row.sm_split_k1),
+        "blocks_k0": int(row.blocks_k0), "blocks_k1": int(row.blocks_k1),
+        "threads_per_block": int(row.threads_per_block),
     }
     empty_metrics = dict(kernel_instances_in_window="", distinct_greenctx="",
                           union_busy_ms="", concurrent_ms="", overlap_ratio="")

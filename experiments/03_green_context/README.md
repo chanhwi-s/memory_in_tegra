@@ -93,9 +93,16 @@ scripts/parse_nsys_csv.py  small parser: finds the NVTX "measure" range (marked 
                         distinct_greenctx (green: expect 2, confirming the SM split created
                         two separate green contexts). Also runnable standalone on one cell's
                         CSV pair.
-scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> results/plots/
-                        overlap_ratio_vs_footprint_combined_footprint.png (shared vs green,
-                        reference line at overlap_ratio=1). Skips cleanly if the CSV is absent.
+scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> a grouped bar chart
+                        (results/plots/overlap_ratio_vs_footprint_combined_footprint.png,
+                        mode x config, overlap_ratio as a labeled PERCENTAGE + 100%
+                        reference line -- not a line plot, since there are only 2
+                        x-positions/modes) plus results/overlap_nsys_table.md (same numbers as
+                        a markdown table). Both also surface each cell's EXACT profiled
+                        configuration (K0/K1 size, SM split, block counts, threads/block) --
+                        as per-bar annotations on the chart and as columns in the table.
+                        Degrades gracefully (a stderr NOTE, no crash) if run against an older
+                        overlap_nsys.csv from before those config columns existed.
 scripts/verify_overlap_nsys.sh  standalone entry point for just the nsys step (build if
                         stale, lock clocks, run_overlap_nsys.py, plot_overlap_nsys.py);
                         run.sh calls the same two Python scripts directly, this is for
