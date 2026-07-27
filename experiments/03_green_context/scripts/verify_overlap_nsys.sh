@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Phase 3 -- verify concurrent overlap with nsys (prompts/03_green_context/03_verify_overlap_nsys.md).
 # VERIFICATION ONLY: confirms the two kernels really run concurrently, on the actual
-# execution timeline, for every cell the throughput sweep (scripts/sweep.py) measures.
+# execution timeline, for the cells that appear in scripts/plot.py's green_vs_shared.png
+# (shared + best-green, at the single peak-bandwidth test point per mode -- read from the
+# already-measured results/phase3_results.csv, NOT the full sweep; see
+# scripts/run_overlap_nsys.py). Needs results/phase3_results.csv
+# and the built binary to already exist (run scripts/run.sh first).
 # Does NOT touch results/phase3_results.csv, findings.json, or scripts/plot.py -- writes
 # only results/overlap_nsys.csv and results/plots/overlap_ratio_vs_footprint_combined_footprint.png.
 # Intended to run on the Jetson AGX Orin device itself. Runnable from anywhere.
 #
-# Pass --dry-run to preview the cell list (same cells scripts/sweep.py measures) without
-# nsys or a CUDA device.
+# Pass --dry-run to preview the selected cells without nsys, `timeout`, or a CUDA device.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +46,7 @@ if [ ${#DRY_RUN[@]} -eq 0 ]; then
     sudo jetson_clocks || echo "WARNING: jetson_clocks failed (not on Jetson, or no sudo) — continuing"
 fi
 
-echo "Running nsys overlap verification (all Phase 3 sweep cells, shared + green)..."
+echo "Running nsys overlap verification (shared + best-green at the peak-bandwidth point per mode)..."
 python3 "$SCRIPT_DIR/run_overlap_nsys.py" "${DRY_RUN[@]}"
 
 if [ ${#DRY_RUN[@]} -eq 0 ]; then

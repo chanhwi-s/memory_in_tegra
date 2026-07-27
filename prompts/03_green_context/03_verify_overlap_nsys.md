@@ -7,8 +7,14 @@ numbers. Add one new script + one new CSV + one new plot under `experiments/03_g
 
 ## Goal
 Confirm, on the actual execution timeline, that the two kernels really run **concurrently** in Phase 3
-— for **every** sweep cell (all kernel sizes), in **both** `shared` and `green` configs. The timing
-heuristic `wall < serial_sum` cannot distinguish "did not overlap" from "overlapped but bandwidth-
+— **only for the cells that actually appear in the `green_vs_shared` plot** (NOT all 149 sweep cells).
+`plot.py`'s `green_vs_shared.png` shows, per size (`test_point_id`), just two points: the `shared`
+cell and the single **best-green** cell = the SM split with the maximum `agg_GBps_median` among that
+size's green rows (`green.agg_GBps_median.max()`). The other green split ratios are swept but never
+plotted, so tracing them wastes time. Restrict nsys to exactly that plotted set — `{shared}` plus the
+`{best-green split}` per size.
+
+The timing heuristic `wall < serial_sum` cannot distinguish "did not overlap" from "overlapped but bandwidth-
 shared"; nsys records the real timeline and resolves this. (nsys does NOT serialize kernels — unlike
 ncu — so it is the correct tool here.)
 
@@ -26,14 +32,21 @@ per-pair labeling of K0 vs K1 is needed. Also report `concurrent_time`, `union_b
 kernel-instance count for transparency.
 
 ## Deliverable — `experiments/03_green_context/scripts/verify_overlap_nsys.sh` (+ a small parser)
-1. Enumerate **the same cells the Phase 3 sweep uses** (reuse `scripts/sweep.py` / the sweep config
-   CSV so sizes and configs match exactly — all sizes, both `shared` and `green`).
-2. For each cell, run the existing per-cell `build/phase3_bench` invocation under nsys:
+1. **Select only the plotted cells** from the existing Phase 3 results CSV, reusing the SAME best-green
+   selection as `plot.py` (`_summary_table` / `plot_green_vs_shared`): for each `test_point_id`, take
+   the `shared` row, and the `green` row whose `agg_GBps_median` is the max for that `test_point_id`
+   (its `sm_split_k0:sm_split_k1`). Reconstruct each selected cell's exact `phase3_bench` arguments
+   from that CSV row (do not re-enumerate the whole sweep). Result ≈ (number of sizes) × 2 cells.
+2. For each selected cell, run its `build/phase3_bench` invocation under nsys, wrapped in a per-cell
+   `timeout` so one stuck cell can't hang the whole run, and with CPU sampling off (CUDA trace is all
+   we need — this also avoids a known nsys-hang on Jetson/aarch64):
    ```
-   nsys profile -t cuda --force-overwrite=true -o <tmp>/cell ./build/phase3_bench <cell args>
+   timeout 180 nsys profile -t cuda --sample=none --cpuctxsw=none \
+       --force-overwrite=true -o <tmp>/cell ./build/phase3_bench <cell args>
    nsys export --type=sqlite --force-overwrite=true <tmp>/cell.nsys-rep
    ```
-   Parse `CUPTI_ACTIVITY_KIND_KERNEL` (`start`, `end`) from the sqlite to compute the metric above.
+   Parse `CUPTI_ACTIVITY_KIND_KERNEL` (`start`, `end`) from the sqlite to compute the metric above. If
+   a cell times out, record `overlap_ratio` as NaN with a `timeout` note and continue.
 3. Append one row per cell to a **new** CSV `results/overlap_nsys.csv`:
    ```
    test_point_id, mode, config, k0_bytes, k1_bytes, combined_read_footprint_bytes, reuse_N,

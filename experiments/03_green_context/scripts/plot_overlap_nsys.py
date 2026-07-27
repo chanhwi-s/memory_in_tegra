@@ -10,11 +10,13 @@ Additive-only: does not touch results/phase3_results.csv, findings.json, or
 scripts/plot.py. Reuses the log2/MB axis helper from scripts/plot_combined_footprint.py
 so this figure is visually consistent with that one (same phase, same x quantity).
 
-A test point's `green` config has several SM-partition-ratio cells in the
-underlying sweep (scripts/sweep.py sweeps a handful of splits per size); this
-plot summarizes them as the MEAN overlap_ratio across splits per test point --
-concurrency (unlike throughput) is not expected to vary much by split, so one
-representative "green" line is more readable than one line per split.
+results/overlap_nsys.csv has exactly one shared row and one green row per
+test_point_id, and only 2 test points total -- one per mode, the single
+peak-bandwidth size scripts/run_overlap_nsys.py selects (not the full sweep,
+not even every size scripts/plot.py's green_vs_shared.png shows). The
+per-test-point aggregation below is a formality (mean of one value); it's
+kept defensive rather than assuming exactly one row, in case a future run's
+CSV ever has duplicates for a test_point_id.
 """
 import importlib.util
 import os
@@ -70,7 +72,7 @@ def plot_overlap_ratio(df):
                 color="tab:blue", label="shared")
     if not green.empty:
         ax.plot(green.combined_footprint_mb, green.overlap_ratio, marker="s",
-                color="tab:green", label="green (mean over SM splits)")
+                color="tab:green", label="green (best-green split, matching green_vs_shared.png)")
 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="overlap_ratio = 1 (full concurrency)")
     _set_log2_mb_axis(ax)

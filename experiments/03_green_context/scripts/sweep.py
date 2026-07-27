@@ -75,7 +75,12 @@ CSV_HEADER = (
 DEFAULT_TPB = 256
 DEFAULT_BLOCKS_SEED = 64
 
-SYMMETRIC_SPLITS = [(4, 12), (6, 10), (8, 8), (10, 6), (12, 4)]
+# 03_symmetric_fix_8_8_split.md: for equal-size/equal-work symmetric kernels,
+# 8:8 is the only meaningful SM split -- any other ratio just handicaps one
+# kernel and adds noise with no research value. (Asymmetric kernels differ in
+# size, so the optimal split is not necessarily proportional -- those still
+# get the full ratio sweep via asymmetric_splits().)
+SYMMETRIC_SPLIT = (8, 8)
 NUM_SMS = 16
 L1_BYTES_PER_SM = 192 * 1024
 
@@ -251,7 +256,7 @@ def build_plan(phase1, phase2):
             "blocks0_seed": seed0, "blocks1_seed": seed1, "tpb": tpb,
         })
 
-        splits = SYMMETRIC_SPLITS if tp["mode"] == "symmetric" else asymmetric_splits(tp["k0_bytes"], tp["k1_bytes"])
+        splits = [SYMMETRIC_SPLIT] if tp["mode"] == "symmetric" else asymmetric_splits(tp["k0_bytes"], tp["k1_bytes"])
         for sm0, sm1 in splits:
             cells.append({
                 "test_point_id": tp["test_point_id"], "mode": tp["mode"], "is_anchor": tp["is_anchor"],

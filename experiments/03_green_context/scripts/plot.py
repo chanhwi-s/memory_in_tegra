@@ -125,25 +125,25 @@ def plot_green_vs_shared(df):
 
 
 def _pick_contrast_points(df):
-    """Pick a small-size (L1/scheduling-sensitive) symmetric point and the
-    roofline anchor symmetric point, so partition_sweep.png contrasts the two
+    """Pick a small-size (L1/scheduling-sensitive) ASYMMETRIC point and the
+    roofline anchor ASYMMETRIC point, so partition_sweep.png contrasts the two
     regimes side by side (prompt: "at a small-size point AND at the roofline
-    point"). The roofline anchor is the LARGEST-size symmetric anchor (Phase 2's
-    contention-onset point, 917504 B, is bigger than its ninety_pct point,
-    786432 B) -- anchor ids are `sym_anchor_<bytes>`, not name-tagged
-    "onset", so size order is how we pick it."""
-    sym = df[df["mode"] == "symmetric"].copy()
-    if sym.empty:
+    point"). Restricted to asymmetric only (03_symmetric_fix_8_8_split.md):
+    symmetric green cells are now a single fixed 8:8 split per size, so a
+    symmetric partition sweep is one point wide and carries no ratio-sweep
+    information (its single 8:8 series is still visible in green_vs_shared.png)."""
+    asym = df[df["mode"] == "asymmetric"].copy()
+    if asym.empty:
         return None, None
-    sizes_by_tp = sym.groupby("test_point_id").swept_size_bytes.first()
+    sizes_by_tp = asym.groupby("test_point_id").swept_size_bytes.first()
 
-    anchor_tps = sym[sym.is_anchor].test_point_id.unique()
+    anchor_tps = asym[asym.is_anchor].test_point_id.unique()
     if len(anchor_tps):
         roofline_tp = sizes_by_tp[anchor_tps].idxmax()
     else:
         roofline_tp = sizes_by_tp.idxmax()
 
-    non_anchor_tps = sym[~sym.is_anchor].test_point_id.unique()
+    non_anchor_tps = asym[~asym.is_anchor].test_point_id.unique()
     if len(non_anchor_tps):
         small_tp = sizes_by_tp[non_anchor_tps].idxmin()
     else:
@@ -162,8 +162,9 @@ def _plot_split_panel(ax, df, tp):
     ax.plot(sub.split_label, sub.agg_GBps_median, marker="o", label="aggregate")
     ax.plot(sub.split_label, sub.k0_GBps_median, marker="s", label="K0")
     ax.plot(sub.split_label, sub.k1_GBps_median, marker="^", label="K1")
-    size_bytes = int(sub.k0_bytes.iloc[0])
-    ax.set_xlabel(f"SM split (K0:K1) -- {tp} (per-kernel size {size_bytes:,} B)")
+    k0_bytes = int(sub.k0_bytes.iloc[0])
+    k1_bytes = int(sub.k1_bytes.iloc[0])
+    ax.set_xlabel(f"SM split (K0:K1) -- {tp} (K0={k0_bytes:,} B fixed, K1={k1_bytes:,} B)")
     ax.set_ylabel("Achieved bandwidth (GB/s)")
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -171,7 +172,10 @@ def _plot_split_panel(ax, df, tp):
 
 def plot_partition_sweep(df):
     """Aggregate + per-kernel GB/s vs SM split ratio, contrasting a small-size
-    (L1/scheduling) point and the roofline (DRAM-bound) anchor point."""
+    (L1/scheduling) point and the roofline (DRAM-bound) anchor point --
+    ASYMMETRIC only (03_symmetric_fix_8_8_split.md): symmetric green cells are
+    now a single fixed 8:8 split per size, so a symmetric ratio sweep no
+    longer exists / carries no information."""
     small_tp, roofline_tp = _pick_contrast_points(df)
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     if small_tp:
@@ -184,7 +188,7 @@ def plot_partition_sweep(df):
         axes[1].set_title(f"Roofline anchor: {roofline_tp}")
     else:
         axes[1].set_title("(no roofline anchor)")
-    fig.suptitle("Phase 3 v3: throughput vs SM partition ratio -- small vs roofline regime")
+    fig.suptitle("Phase 3: throughput vs SM partition ratio (asymmetric only) -- small vs roofline regime")
     fig.tight_layout()
     out = os.path.join(PLOTS_DIR, "partition_sweep.png")
     fig.savefig(out, dpi=150)
