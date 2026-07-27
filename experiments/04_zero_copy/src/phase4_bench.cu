@@ -441,62 +441,80 @@ static CellResult measureConcurrentCell(const Buffer& A0, const Buffer& B0, Buff
 }
 
 // ---- v2 Change 1: in-context block-count saturation search ----
-// Local search around the seed (phase2_bench-style: independent 1-D passes, K0 then K1),
-// widened per prompts/04_zero_copy_v2.md to {1,2,4,8}x seed, capped at 1024. Run
-// independently per (test point row's config, cached|zerocopy path) by the caller -- this
-// function itself is path/config-agnostic, it just measures whatever buffers/streams it's
-// handed.
-static const std::vector<int> kSearchMultipliers = {1, 2, 4, 8};
-static int clampBlocks(int b) { return std::min(b, 1024); }
+// Local search around the seed (phase2_bench-style: independent 1-D passes, K0 then K1).
+// prompts/04_zero_copy/04_block_saturation_fix.md widened this from {1,2,4,8}x/cap-1024
+// (too narrow -- 17/22 cells never reached a plateau and were pinned at the 1024 cap, per
+// worklog/2026-07-27-1015_HANDOFF.md §4) to {1,2,4,8,16}x/cap-8192. Run independently per
+// (test point row's config, cached|zerocopy path) by the caller -- this function itself is
+// path/config-agnostic, it just measures whatever buffers/streams it's handed.
+static const std::vector<int> kSearchMultipliers = {1, 2, 4, 8, 16};
+static int clampBlocks(int b) { return std::min(b, 8192); }
+// A candidate counts as "the plateau" only if it's within this fraction of the pass's best
+// measured throughput -- same 2%-of-max convention Phase 1 uses for its own saturation flag
+// (experiments/01_single_kernel_size/src/phase1_bench.cu). Matches the fix prompt's "throughput
+// within ~2% of the next larger count" requirement more precisely than only checking whether
+// the argmax candidate happened to be the last one tried (noise could pick an earlier index
+// even while the curve is still rising toward the range's edge).
+static const double kPlateauRelTol = 0.02;
 
 struct SearchResult {
     int blocksK0;
     int blocksK1;
-    bool plateauReached;  // false if the best candidate was the top of the search range
-                          // (8x seed, or the 1024 cap) -- i.e. still rising, range too narrow
+    bool plateauReached;  // false if the widest candidate tried is not within kPlateauRelTol of
+                          // this pass's best throughput -- i.e. still rising, range too narrow.
+                          // Never true merely because the search hit the 8192 cap.
 };
+
+// Runs one 1-D pass over kSearchMultipliers (holding the other kernel's block count fixed at
+// `fixedOther`), returning the smallest candidate that achieves this pass's best throughput and
+// whether the widest candidate tried confirms a true plateau (see kPlateauRelTol above).
+static void searchOnePass(const Buffer& A0, const Buffer& B0, Buffer& C0, size_t n0,
+                           const Buffer& A1, const Buffer& B1, Buffer& C1, size_t n1, int seed,
+                           int fixedOther, bool searchingK0, int tpb, int reuseN, cudaStream_t s0,
+                           cudaStream_t s1, int trials, int* outBest, bool* outPlateau) {
+    std::vector<int> cands(kSearchMultipliers.size());
+    std::vector<double> aggs(kSearchMultipliers.size());
+    for (size_t mi = 0; mi < kSearchMultipliers.size(); ++mi) {
+        int cand = clampBlocks(seed * kSearchMultipliers[mi]);
+        cands[mi] = cand;
+        CellResult r = searchingK0
+                           ? measureConcurrentCell(A0, B0, C0, n0, A1, B1, C1, n1, cand,
+                                                    clampBlocks(fixedOther), tpb, reuseN, s0, s1,
+                                                    trials)
+                           : measureConcurrentCell(A0, B0, C0, n0, A1, B1, C1, n1,
+                                                    clampBlocks(fixedOther), cand, tpb, reuseN, s0,
+                                                    s1, trials);
+        aggs[mi] = r.agg_GBps_median;
+    }
+
+    double bestAgg = -1;
+    int bestCand = cands.back();
+    for (size_t mi = 0; mi < cands.size(); ++mi) {
+        if (aggs[mi] > bestAgg) {
+            bestAgg = aggs[mi];
+            bestCand = cands[mi];
+        }
+    }
+
+    double widestAgg = aggs.back();
+    *outBest = bestCand;
+    *outPlateau = (widestAgg >= (1.0 - kPlateauRelTol) * bestAgg);
+}
 
 static SearchResult searchBlockSaturation(const Buffer& A0, const Buffer& B0, Buffer& C0, size_t n0,
                                            const Buffer& A1, const Buffer& B1, Buffer& C1, size_t n1,
                                            int seedK0, int seedK1, int tpb, int reuseN,
                                            cudaStream_t s0, cudaStream_t s1) {
-    const int kSearchTrials = 3;
-    int bestK0 = clampBlocks(seedK0);
-    int bestK1 = clampBlocks(seedK1);
-    bool k0AtCap = true, k1AtCap = true;
-
-    {
-        double bestAgg = -1;
-        for (size_t mi = 0; mi < kSearchMultipliers.size(); ++mi) {
-            int cand = clampBlocks(seedK0 * kSearchMultipliers[mi]);
-            CellResult r = measureConcurrentCell(A0, B0, C0, n0, A1, B1, C1, n1, cand,
-                                                  clampBlocks(seedK1), tpb, reuseN, s0, s1,
-                                                  kSearchTrials);
-            if (r.agg_GBps_median > bestAgg) {
-                bestAgg = r.agg_GBps_median;
-                bestK0 = cand;
-                k0AtCap = (mi == kSearchMultipliers.size() - 1);
-            }
-        }
-    }
-    {
-        double bestAgg = -1;
-        for (size_t mi = 0; mi < kSearchMultipliers.size(); ++mi) {
-            int cand = clampBlocks(seedK1 * kSearchMultipliers[mi]);
-            CellResult r = measureConcurrentCell(A0, B0, C0, n0, A1, B1, C1, n1, bestK0, cand,
-                                                  tpb, reuseN, s0, s1, kSearchTrials);
-            if (r.agg_GBps_median > bestAgg) {
-                bestAgg = r.agg_GBps_median;
-                bestK1 = cand;
-                k1AtCap = (mi == kSearchMultipliers.size() - 1);
-            }
-        }
-    }
-
+    const int kSearchTrials = 10;
     SearchResult res;
-    res.blocksK0 = bestK0;
-    res.blocksK1 = bestK1;
-    res.plateauReached = !(k0AtCap || k1AtCap);
+    bool k0Plateau, k1Plateau;
+
+    searchOnePass(A0, B0, C0, n0, A1, B1, C1, n1, seedK0, seedK1, /*searchingK0=*/true, tpb,
+                  reuseN, s0, s1, kSearchTrials, &res.blocksK0, &k0Plateau);
+    searchOnePass(A0, B0, C0, n0, A1, B1, C1, n1, seedK1, res.blocksK0, /*searchingK0=*/false, tpb,
+                  reuseN, s0, s1, kSearchTrials, &res.blocksK1, &k1Plateau);
+
+    res.plateauReached = k0Plateau && k1Plateau;
     return res;
 }
 
