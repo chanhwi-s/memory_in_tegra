@@ -16,6 +16,11 @@ Phase 3 has 2 concurrent kernels -> combined_read_footprint_bytes =
 
 Additive only: reads existing results/*.csv, writes new results/plots/*_combined_footprint.png.
 Does not touch results/*.csv, findings.json, or scripts/plot.py.
+
+symmetric/asymmetric are plotted as two side-by-side panels (same layout as
+scripts/plot.py's plot_green_vs_shared) rather than merged onto one panel --
+merging them onto a single combined-footprint axis was tried first but reads
+worse than keeping the two-panel layout readers already know from plot.py.
 """
 import json
 import os
@@ -32,7 +37,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PHASE_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(PHASE_DIR))
 CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
-REUSE_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_reuse_results.csv")
 PLOTS_DIR = os.path.join(PHASE_DIR, "results", "plots")
 PHASE1_FINDINGS = os.path.join(REPO_ROOT, "experiments", "01_single_kernel_size", "findings.json")
 
@@ -125,71 +129,32 @@ def _point_summary(df):
 
 def plot_green_vs_shared_combined_footprint(df, cache_boundary_mb, dram_peak_gbps):
     """Aggregate GB/s vs combined read footprint (MB, log2), shared vs green --
-    symmetric and asymmetric test points merged onto the SAME x-axis, since the
-    unified footprint definition is exactly what makes them comparable (unlike
-    the per-kernel-size axis in the existing scripts/plot.py, where the two
-    modes need separate panels)."""
+    one panel per mode (symmetric, asymmetric), same two-panel layout as
+    scripts/plot.py's plot_green_vs_shared, just with the combined-footprint
+    x-axis instead of per-kernel size."""
     s = _point_summary(df)
     if s.empty:
         sys.exit("No shared-baseline rows found in phase3_results.csv -- nothing to plot")
 
-    fig, ax = plt.subplots(figsize=(10, 6.5))
-    markers = {"symmetric": "o", "asymmetric": "^"}
-    for mode, g in s.groupby("mode"):
-        ax.plot(g.combined_footprint_mb, g.shared_agg_GBps, marker=markers.get(mode, "o"),
-                 linestyle="-", color="tab:blue",
-                 label=f"shared ({mode})" if mode == "symmetric" else f"shared ({mode})",
-                 alpha=1.0 if mode == "symmetric" else 0.6)
-        ax.plot(g.combined_footprint_mb, g.best_green_agg_GBps, marker=markers.get(mode, "o"),
-                 linestyle="-", color="tab:green",
-                 label=f"best green ({mode})",
-                 alpha=1.0 if mode == "symmetric" else 0.6)
-
-    _draw_reference_lines(ax, cache_boundary_mb, dram_peak_gbps)
-    _set_log2_mb_axis(ax)
-    ax.set_ylabel("Aggregate achieved bandwidth (GB/s)")
-    ax.set_title("Phase 3: shared vs best-green aggregate throughput vs combined read footprint")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=8)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+    for ax, mode in zip(axes, ["symmetric", "asymmetric"]):
+        g = s[s["mode"] == mode]
+        if g.empty:
+            ax.set_title(f"{mode} (no data)")
+            continue
+        ax.plot(g.combined_footprint_mb, g.shared_agg_GBps, marker="o",
+                 color="tab:blue", label="shared (baseline)")
+        ax.plot(g.combined_footprint_mb, g.best_green_agg_GBps, marker="s",
+                 color="tab:green", label="best green (partitioned)")
+        _draw_reference_lines(ax, cache_boundary_mb, dram_peak_gbps)
+        _set_log2_mb_axis(ax)
+        ax.set_title(f"Phase 3: {mode}")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(fontsize=8)
+    axes[0].set_ylabel("Aggregate achieved bandwidth (GB/s)")
+    fig.suptitle("Shared vs best-green aggregate throughput vs combined read footprint")
     fig.tight_layout()
     out = os.path.join(PLOTS_DIR, "green_vs_shared_combined_footprint.png")
-    fig.savefig(out, dpi=150)
-    print(f"wrote {out}")
-
-
-def plot_reuse_overlay_combined_footprint(cache_boundary_mb, dram_peak_gbps):
-    """One line per reuse_N, shared vs green, vs combined read footprint (MB,
-    log2). Purely additive: skips cleanly if the reuse-overlay CSV doesn't
-    exist yet (scripts/sweep_reuse.py), same convention as scripts/plot.py's
-    plot_reuse_overlay()."""
-    if not os.path.exists(REUSE_CSV_PATH):
-        print(f"NOTE: {REUSE_CSV_PATH} not found -- skipping reuse_green_vs_shared_combined_footprint.png "
-              f"(run scripts/sweep_reuse.py to generate the reuse overlay)", file=sys.stderr)
-        return
-
-    df = pd.read_csv(REUSE_CSV_PATH)
-    df["combined_footprint_mb"] = combined_footprint_mb(df)
-
-    fig, ax = plt.subplots(figsize=(10, 6.5))
-    cmap = plt.get_cmap("viridis")
-    reuse_ns = sorted(df.reuse_N.unique())
-    for i, reuse_n in enumerate(reuse_ns):
-        color = cmap(i / max(len(reuse_ns) - 1, 1))
-        for config, linestyle, marker in (("shared", "--", "o"), ("green", "-", "s")):
-            sub = df[(df.reuse_N == reuse_n) & (df.config == config)].sort_values("combined_footprint_mb")
-            if sub.empty:
-                continue
-            ax.plot(sub.combined_footprint_mb, sub.agg_GBps_median, marker=marker, linestyle=linestyle,
-                     color=color, label=f"{config} N={reuse_n}")
-
-    _draw_reference_lines(ax, cache_boundary_mb, dram_peak_gbps)
-    _set_log2_mb_axis(ax)
-    ax.set_ylabel("Aggregate achieved bandwidth (GB/s)")
-    ax.set_title("Phase 3 reuse overlay: aggregate GB/s vs combined read footprint, by reuse_N")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=7, ncol=2)
-    fig.tight_layout()
-    out = os.path.join(PLOTS_DIR, "reuse_green_vs_shared_combined_footprint.png")
     fig.savefig(out, dpi=150)
     print(f"wrote {out}")
 
@@ -199,7 +164,6 @@ def main():
     cache_boundary_mb, dram_peak_gbps = load_reference_lines()
     df = load_main()
     plot_green_vs_shared_combined_footprint(df, cache_boundary_mb, dram_peak_gbps)
-    plot_reuse_overlay_combined_footprint(cache_boundary_mb, dram_peak_gbps)
 
 
 if __name__ == "__main__":
