@@ -1,1 +1,5 @@
-test_point_id,mode,config,k0_bytes,k1_bytes,combined_read_footprint_bytes,reuse_N,kernel_instances,union_busy_ms,concurrent_ms,overlap_ratio,gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version
+test_point_id,mode,config,k0_bytes,k1_bytes,combined_read_footprint_bytes,kernel_instances_in_window,distinct_greenctx,union_busy_ms,concurrent_ms,overlap_ratio,gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version
+asym_65536,asymmetric,shared,1048576,65536,2228224,,,,,,1300,MAXN,52.3,13.2,13.2
+asym_65536,asymmetric,green,1048576,65536,2228224,,,,,,1300,MAXN,52.7,13.2,13.2
+sym_25165824,symmetric,shared,25165824,25165824,100663296,,,,,,1300,MAXN,52.3,13.2,13.2
+sym_25165824,symmetric,green,25165824,25165824,100663296,,,,,,1300,MAXN,52.5,13.2,13.2

@@ -1,10 +1,10 @@
 # Phase 4 v2 Findings -- Zero Copy + Reuse Crossover (widened sweep, re-saturated blocks)
 
-Generated 2026-07-27T02:48:13Z from `experiments/04_zero_copy/results/phase4_results.csv`. All numbers below are computed directly from that CSV (and `results/l2_profile.csv` if present) by `scripts/derive_findings.py` -- re-run it (do not hand-edit) if either CSV changes. This run **supersedes** the first Phase 4 run per `prompts/04_zero_copy_v2.md`.
+Generated 2026-07-27T04:33:04Z from `experiments/04_zero_copy/results/phase4_results.csv`. All numbers below are computed directly from that CSV (and `results/l2_profile.csv` if present) by `scripts/derive_findings.py` -- re-run it (do not hand-edit) if either CSV changes. This run **supersedes** the first Phase 4 run per `prompts/04_zero_copy_v2.md`.
 
 ## Headline
 
-Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 1.50MB-1.50MB range, peaking at asym_00 (l1 regime): +11.6% at reuse N=1, crossing over around reuse N=>32. Beyond that (2.00MB-8.04MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses).
+Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 1.50MB-1.50MB range, peaking at asym_00 (l1 regime): +11.4% at reuse N=1, crossing over around reuse N=>32. Beyond that (2.00MB-24.62MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses).
 
 ## Sanity gate (Change 1: block saturation must not regress vs the first run)
 
@@ -12,31 +12,31 @@ SANITY GATE FAILED -- re-swept cached aggregate is LOWER than v1 at one or more 
 
 | test_point_id | config | reuse_N | v1 cached GB/s | v2 cached GB/s | status |
 |---|---|---|---|---|---|
-| asym_2 | shared | 1 | 122.8 | 132.8 | pass |
-| asym_2 | shared | 2 | 146.3 | 150.5 | pass |
-| asym_2 | shared | 4 | 161.8 | 163.0 | pass |
-| asym_2 | shared | 8 | 175.0 | 172.1 | FAIL |
-| asym_2 | shared | 16 | 183.2 | 180.5 | FAIL |
-| asym_2 | shared | 32 | 187.8 | 184.5 | FAIL |
-| sym_0 | shared | - | - | - | no v1 baseline match (no v1 baseline row at this exact (config, k0_bytes, k1_bytes) -- likely because v1's gen_test_points.py resolved this label to a different size (see FINDINGS.md discrepancy note).) |
-| sym_1 | shared | 1 | 84.3 | 93.5 | pass |
-| sym_1 | shared | 2 | 128.1 | 111.9 | FAIL |
-| sym_1 | shared | 4 | 171.2 | 122.0 | FAIL |
-| sym_1 | shared | 8 | 198.0 | 138.8 | FAIL |
-| sym_1 | shared | 16 | 217.8 | 147.9 | FAIL |
-| sym_1 | shared | 32 | 231.0 | 157.4 | FAIL |
+| asym_2 | shared | 1 | 122.8 | 130.3 | pass |
+| asym_2 | shared | 2 | 146.3 | 143.1 | FAIL |
+| asym_2 | shared | 4 | 161.8 | 159.2 | FAIL |
+| asym_2 | shared | 8 | 175.0 | 173.4 | FAIL |
+| asym_2 | shared | 16 | 183.2 | 177.4 | FAIL |
+| asym_2 | shared | 32 | 187.8 | 183.5 | FAIL |
+| sym_0 | shared | 1 | 84.3 | 96.1 | pass |
+| sym_0 | shared | 2 | 128.1 | 123.8 | FAIL |
+| sym_0 | shared | 4 | 171.2 | 141.3 | FAIL |
+| sym_0 | shared | 8 | 198.0 | 172.7 | FAIL |
+| sym_0 | shared | 16 | 217.8 | 190.4 | FAIL |
+| sym_0 | shared | 32 | 231.0 | 201.3 | FAIL |
+| sym_1 | shared | - | - | - | no v1 baseline match (no v1 baseline row at this exact (config, k0_bytes, k1_bytes) -- likely because v1's gen_test_points.py resolved this label to a different size (see FINDINGS.md discrepancy note).) |
 
 ## Asymmetric large-kernel (K1) sweep -- the headline story
 
 | test_point_id | regime | k1_bytes | zc delta @ N=1 | crossover N | bound conclusion | plateau reached | L2 bypass verified |
 |---|---|---|---|---|---|---|---|
-| asym_00 | l1 | 1.50MB | +11.6% | none in 1..32 | memory-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_2 | dram | 2.00MB | -11.7% | none in 1..32 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_02 | dram | 2.62MB | +1.0% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_03 | dram | 4.59MB | +0.2% | 4 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_04 | dram | 8.04MB | -1.7% | 8 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_05 | dram | 14.07MB | -0.8% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
-| asym_06 | dram | 24.62MB | -0.3% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_00 | l1 | 1.50MB | +11.4% | none in 1..32 | memory-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_2 | dram | 2.00MB | -5.9% | 2 | compute-bound | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_02 | dram | 2.62MB | -1.5% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_03 | dram | 4.59MB | -0.6% | none in 1..32 | dram-bound-throughout | False | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_04 | dram | 8.04MB | -0.6% | none in 1..32 | dram-bound-throughout | True | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_05 | dram | 14.07MB | -0.2% | none in 1..32 | dram-bound-throughout | True | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
+| asym_06 | dram | 24.62MB | +0.1% | 2 | compute-bound | True | NO -- l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh) |
 
 ## Symmetric anchors (secondary -- NOT the large-kernel story, kept for continuity)
 
@@ -44,10 +44,10 @@ Both kernels are the same size here, so this is a contention point, not a large/
 
 | test_point_id | k_bytes | zc delta @ N=1 | crossover N | bound conclusion |
 |---|---|---|---|---|
-| sym_0 | 768KB | +5.2% | 2 | memory-bound |
-| sym_1 | 896KB | +28.4% | none in 1..32 | memory-bound |
-| sym_ctx_large | 24.62MB | +0.2% | 4 | compute-bound |
-| sym_ctx_small | 1.50MB | +4.1% | 2 | memory-bound |
+| sym_0 | 896KB | +31.1% | none in 1..32 | memory-bound |
+| sym_1 | 1.00MB | +31.7% | none in 1..32 | memory-bound |
+| sym_ctx_large | 24.62MB | -0.0% | 4 | compute-bound |
+| sym_ctx_small | 1.50MB | +4.3% | 2 | memory-bound |
 
 ## Discrepancy vs first Phase 4 run
 
