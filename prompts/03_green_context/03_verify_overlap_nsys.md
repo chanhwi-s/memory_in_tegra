@@ -51,9 +51,14 @@ nsys stats --report cuda_gpu_trace     --format csv --force-export=true --output
 nsys stats --report nvtx_pushpop_trace --format csv --force-export=true --output <tmp>/cell <tmp>/cell.nsys-rep
 ```
 This writes `<tmp>/cell_cuda_gpu_trace.csv` and `<tmp>/cell_nvtx_pushpop_trace.csv`.
+**GOTCHA: `nsys stats --output` skips regeneration if the target CSV already exists** (`SKIPPED:
+output file exists`) — use a **unique temp base per cell** (or delete the old CSVs first), otherwise the
+parser reads a stale previous cell's trace and metrics come out wrong/empty.
 
 **Parse (all timestamps share one global ns timebase):**
-1. From the NVTX CSV, find the `measure` range → its `[start, end]` (ns).
+1. From the NVTX CSV (`nvtx_pushpop_trace`), find the measure range using its `Start (ns)` / `End (ns)`
+   columns. **GOTCHA: the `Name` is reported as `:measure` (leading colon from the RangeStack), not
+   `measure`** — match by substring (`'measure' in Name`), never by exact equality, or you get 0 rows.
 2. From the GPU-trace CSV, keep only `addKernel(...)` rows (exclude `fillKernel` init) whose interval
    `[Start, Start+Duration]` falls inside the `measure` window.
 3. Label-free overlap via sweep line over those intervals:

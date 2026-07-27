@@ -38,7 +38,7 @@
 //   - lower_bound = max(seed_from_phase1, kBlocksPerSmMin * assigned_sm_count)
 //     so the search range scales with how many SMs this partition actually has
 //     (a green 8-SM partition and the 16-SM shared config get different bounds).
-//   - candidates = {1,2,4,8} x lower_bound, each clamped to kBlocksCap (1024).
+//   - candidates = {1,2,4,8,16,32,64} x lower_bound, each clamped to kBlocksCap (8192).
 //   - phase2_bench-style local search: sweep K0's candidates with K1 held at its
 //     own lower bound, pick the best (lowest wall time == highest agg GB/s);
 //     then sweep K1's candidates with K0 held at the chosen best; pick the best.
@@ -229,8 +229,8 @@ static Stats computeStats(std::vector<double> v) {
 // own ~4 blocks/SM at its saturation point, e.g. 64 blocks / 16 SMs); the actual
 // plateau is still found by the search below, this only seeds where it starts.
 static const int kBlocksPerSmMin = 4;
-static const int kSearchMultipliers[] = {1, 2, 4, 8};
-static const int kBlocksCap = 1024;
+static const int kSearchMultipliers[] = {1, 2, 4, 8, 16, 32. 64};
+static const int kBlocksCap = 8192;
 static const double kPlateauGainFrac = 0.02;  // <2% gain over previous candidate = plateaued
 static const int kSearchTrials = 3;           // cheap timing during the search; final cell uses a.trials
 
