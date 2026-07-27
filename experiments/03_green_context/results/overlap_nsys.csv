@@ -1,0 +1,1 @@
+test_point_id,mode,config,k0_bytes,k1_bytes,combined_read_footprint_bytes,reuse_N,kernel_instances,union_busy_ms,concurrent_ms,overlap_ratio,gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version

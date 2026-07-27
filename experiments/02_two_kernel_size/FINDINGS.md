@@ -1,6 +1,6 @@
 # Phase 2 Findings — Two-Kernel Size Sweep
 
-Generated 2026-07-27T01:39:26Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
+Generated 2026-07-27T02:46:54Z from `experiments/02_two_kernel_size/results/phase2_results.csv`. All numbers below are
 computed directly from that CSV by `scripts/derive_findings.py` — re-run it (do not hand-edit)
 if the CSV is regenerated. Consumed upstream: experiments/01_single_kernel_size/findings.json.
 
@@ -8,7 +8,7 @@ if the CSV is regenerated. Consumed upstream: experiments/01_single_kernel_size/
 
 - **Per-kernel size (worst measured contention):** 917,504 bytes (~0.88 MB)
 - **Combined read footprint:** 3,670,016 bytes
-- **scaling_efficiency at this point (local minimum):** 0.3622
+- **scaling_efficiency at this point (local minimum):** 0.2626
 
 `symmetric_roofline_points` (onset + ~90%-below point, for Phase 3/4): see `findings.json`.
 Onset here is defined as the local minimum of `scaling_efficiency` across the sweep, not the
@@ -18,9 +18,9 @@ for why (real data need not decay monotonically from ~1.0).
 ## 2b — Asymmetric result at k
 
 - **k (per-buffer bytes):** 2,097,152
-- **aggregate GB/s at k:** 158.342
-- **K0 GB/s at k:** 70.722
-- **K1 GB/s at k:** 105.561
+- **aggregate GB/s at k:** 157.749
+- **K0 GB/s at k:** 81.479
+- **K1 GB/s at k:** 105.166
 
 ## Recommended Phase 3 test points
 
@@ -61,14 +61,14 @@ diagnostic only).
 
 - **Symmetric reuse_N values swept:** [1, 2, 4, 8, 16, 32]
 - **Collapse point:** at/above 24.00 MB, reuse N=1 and N=32 aggregate GB/s agree within 5% (no further reuse benefit -- DRAM-bound).
-- At the largest tested size (96.00 MB): reuse N=32 aggregate = 190.1 GB/s.
-- At the smallest tested size (512.0 KB): reuse N=32 aggregate = 97.2 GB/s vs N=1 = 50.7 GB/s (+92% from reuse).
+- At the largest tested size (96.00 MB): reuse N=32 aggregate = 189.9 GB/s.
+- At the smallest tested size (512.0 KB): reuse N=32 aggregate = 97.1 GB/s vs N=1 = 50.7 GB/s (+92% from reuse).
 
 ### Asymmetric
 
 - **Asymmetric reuse_N values swept:** [1, 2, 4, 8, 16, 32]
 - **Collapse point:** not reached within the measured range -- reuse N=1 and N=32 still differ by more than 5% at the largest tested size. Consider extending the sweep.
-- At the smallest tested size (256.0 KB): reuse N=32 aggregate = 249.7 GB/s vs N=1 = 166.7 GB/s (+50% from reuse).
+- At the smallest tested size (256.0 KB): reuse N=32 aggregate = 329.1 GB/s vs N=1 = 252.6 GB/s (+30% from reuse).
 
 ### Reading the plot
 
