@@ -32,6 +32,11 @@ if [ ${#DRY_RUN[@]} -eq 0 ]; then
         echo "a machine that has it; report this in the worklog rather than skipping silently." >&2
         exit 1
     fi
+    if ! command -v timeout >/dev/null 2>&1; then
+        echo "FATAL: \`timeout\` (coreutils) not found on PATH -- required to bound each nsys" >&2
+        echo "profile call." >&2
+        exit 1
+    fi
 
     mkdir -p "$PHASE_DIR/results/plots"
 

@@ -76,14 +76,23 @@ scripts/run_overlap_nsys.py  (prompts/03_green_context/03_verify_overlap_nsys.md
                         selects the single peak-bandwidth test point per mode (symmetric,
                         asymmetric) from results/phase3_results.csv, reconstructs its exact
                         shared + best-green cells via --fixed-blocks0/1, profiles each under
-                        `timeout 180 nsys profile -t cuda --sample=none --cpuctxsw=none`, and
-                        writes the SEPARATE results/overlap_nsys.csv (verification-only --
+                        `timeout 180 nsys profile -t cuda,nvtx --sample=none --cpuctxsw=none`,
+                        extracts with `nsys stats --report {cuda_gpu_trace,nvtx_pushpop_trace}
+                        --format csv` (NEVER `nsys export --type=sqlite`, which produces an
+                        EMPTY database on this project's nsys 2025.6.3 -- confirmed on-device),
+                        and writes the SEPARATE results/overlap_nsys.csv (verification-only --
                         never read as throughput). Called automatically by run.sh right after
                         the reuse overlay (pass run.sh --skip-nsys to skip it; also skipped
                         automatically with a warning if `nsys`/`timeout` aren't on PATH).
-scripts/parse_nsys_sqlite.py  small parser: sweep-line over an nsys sqlite export's
-                        CUPTI_ACTIVITY_KIND_KERNEL start/end intervals -> union_busy_ms /
-                        concurrent_ms / overlap_ratio. Also runnable standalone on one trace.
+scripts/parse_nsys_csv.py  small parser: finds the NVTX "measure" range (marked around only
+                        the final measured-trial loop in src/phase3_bench.cu -- excludes
+                        warmup and the in-context block-search, which otherwise dilute the
+                        ratio) in the nvtx_pushpop_trace CSV, keeps `addKernel(...)` rows from
+                        the cuda_gpu_trace CSV whose interval falls inside that window, then
+                        sweep-lines them -> union_busy_ms / concurrent_ms / overlap_ratio /
+                        distinct_greenctx (green: expect 2, confirming the SM split created
+                        two separate green contexts). Also runnable standalone on one cell's
+                        CSV pair.
 scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> results/plots/
                         overlap_ratio_vs_footprint_combined_footprint.png (shared vs green,
                         reference line at overlap_ratio=1). Skips cleanly if the CSV is absent.

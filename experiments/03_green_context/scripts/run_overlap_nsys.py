@@ -17,20 +17,31 @@ entirely and measures at exactly the given block counts) -- this guarantees
 nsys traces the identical configuration that produced the plotted throughput
 number, and is far cheaper than re-running the search per cell.
 
-Each cell is profiled under `nsys profile -t cuda --sample=none --cpuctxsw=none`
-(CPU sampling / context-switch tracing off -- the CUDA trace is all we need,
-and this also sidesteps a known nsys hang on Jetson/aarch64), wrapped in a
-per-cell `timeout` so one stuck cell can't hang the whole run. A cell whose
-`nsys profile` call times out is recorded with overlap_ratio = NaN and a note
--- NOT dropped (that measured configuration still exists and was already
-profiled in the throughput sweep; only nsys itself failed to finish tracing
-it). An invalid SM ratio (rc=4, rejected by the driver) IS dropped -- that
-configuration was never actually measured, so there is nothing to report.
+Each cell is profiled under `nsys profile -t cuda,nvtx --sample=none
+--cpuctxsw=none` (CPU sampling / context-switch tracing off -- the CUDA+NVTX
+trace is all we need, and this also sidesteps a known nsys hang on
+Jetson/aarch64), wrapped in a per-cell `timeout` so one stuck cell can't hang
+the whole run. Extraction uses `nsys stats --report {cuda_gpu_trace,
+nvtx_pushpop_trace} --format csv` -- NEVER `nsys export --type=sqlite`, which
+produces an EMPTY database (0 tables) on this project's nsys version
+(2025.6.3) -- confirmed on-device; see scripts/parse_nsys_csv.py. The overlap
+metric is computed only within the NVTX "measure" window that
+src/phase3_bench.cu now marks around its final measured-trial loop (excludes
+warmup and the in-context block-saturation search, which otherwise dilute the
+ratio badly -- an earlier unwindowed run measured green~=0.10, shared~=0.01,
+both dominated by sequential search launches).
+
+A cell whose `nsys profile` call times out is recorded with overlap_ratio =
+NaN and a note -- NOT dropped (that measured configuration still exists and
+was already profiled in the throughput sweep; only nsys itself failed to
+finish tracing it). An invalid SM ratio (rc=4, rejected by the driver) IS
+dropped -- that configuration was never actually measured, so there is
+nothing to report.
 
 VERIFICATION ONLY. nsys tracing adds overhead; do not read timings out of
 these traces as throughput -- that stays in results/phase3_results.csv from
 the untraced sweep. Traces are written to a temp dir and deleted (.nsys-rep +
-.sqlite) immediately after each cell is parsed (disk hygiene).
+both stats CSVs) immediately after each cell is parsed (disk hygiene).
 
 Use --dry-run to print the selected cells (same selection scripts/plot.py's
 green_vs_shared.png uses) without needing nsys, `timeout`, or a CUDA device.
@@ -51,22 +62,20 @@ RESULTS_CSV_PATH = os.path.join(PHASE_DIR, "results", "phase3_results.csv")
 CSV_PATH = os.path.join(PHASE_DIR, "results", "overlap_nsys.csv")
 
 sys.path.insert(0, SCRIPT_DIR)
-import parse_nsys_sqlite  # noqa: E402
+import parse_nsys_csv  # noqa: E402
 
 # Column order for the new CSV (prompts/03_green_context/03_verify_overlap_nsys.md).
 CSV_FIELDS = [
     "test_point_id", "mode", "config", "k0_bytes", "k1_bytes",
-    "combined_read_footprint_bytes", "reuse_N",
-    "kernel_instances", "union_busy_ms", "concurrent_ms", "overlap_ratio",
+    "combined_read_footprint_bytes",
+    "kernel_instances_in_window", "distinct_greenctx",
+    "union_busy_ms", "concurrent_ms", "overlap_ratio",
     "gpu_clock_mhz", "power_mode", "soc_temp_c", "cuda_version", "driver_version",
 ]
 CSV_HEADER = ",".join(CSV_FIELDS)
 
 PROFILE_TIMEOUT_SEC = 180
 NSYS_TIMEOUT_RC = 124  # GNU coreutils `timeout`: process was killed for exceeding the limit
-# Every row in phase3_results.csv is a reuse_N=1 measurement (the main sweep
-# never passes --reuse-n); this is the real parameter used, not a placeholder.
-REUSE_N = 1
 
 
 def check_tools_available():
@@ -145,12 +154,15 @@ def cell_args(row):
 
 def profile_cell(row, tmp_dir):
     """Returns a dict of CSV_FIELDS -> value, or None to drop the cell (invalid
-    SM ratio -- rc=4). A timeout returns a row with the overlap metrics set to
-    empty (-> NaN on CSV read), per the prompt: record and continue, don't drop."""
+    SM ratio -- rc=4). A timeout, or a missing/unparseable 'measure' NVTX
+    window, returns a row with the overlap metrics left empty (-> NaN on CSV
+    read), per the prompt: record and continue, don't drop."""
     base = os.path.join(tmp_dir, "cell")
     rep_path = base + ".nsys-rep"
-    sqlite_path = base + ".sqlite"
-    for p in (rep_path, sqlite_path):
+    gpu_csv_path = base + "_cuda_gpu_trace.csv"
+    nvtx_csv_path = base + "_nvtx_pushpop_trace.csv"
+    temp_paths = (rep_path, gpu_csv_path, nvtx_csv_path)
+    for p in temp_paths:
         if os.path.exists(p):
             os.remove(p)
 
@@ -159,14 +171,16 @@ def profile_cell(row, tmp_dir):
     out = {
         "test_point_id": row.test_point_id, "mode": row["mode"], "config": row.config,
         "k0_bytes": k0_bytes, "k1_bytes": k1_bytes,
-        "combined_read_footprint_bytes": 2 * k0_bytes + 2 * k1_bytes, "reuse_N": REUSE_N,
+        "combined_read_footprint_bytes": 2 * k0_bytes + 2 * k1_bytes,
         "gpu_clock_mhz": row.gpu_clock_mhz, "power_mode": row.power_mode,
         "soc_temp_c": row.soc_temp_c, "cuda_version": row.cuda_version,
         "driver_version": row.driver_version,
     }
+    empty_metrics = dict(kernel_instances_in_window="", distinct_greenctx="",
+                          union_busy_ms="", concurrent_ms="", overlap_ratio="")
 
     profile_cmd = (
-        ["timeout", str(PROFILE_TIMEOUT_SEC), "nsys", "profile", "-t", "cuda",
+        ["timeout", str(PROFILE_TIMEOUT_SEC), "nsys", "profile", "-t", "cuda,nvtx",
          "--sample=none", "--cpuctxsw=none", "--force-overwrite=true", "-o", base]
         + cell_args(row)
     )
@@ -176,10 +190,10 @@ def profile_cell(row, tmp_dir):
         print(f"WARNING: nsys profile TIMED OUT ({PROFILE_TIMEOUT_SEC}s) for cell "
               f"{row.test_point_id} config={row.config} -- recording overlap_ratio=NaN, "
               f"continuing", file=sys.stderr)
-        for p in (rep_path, sqlite_path):
+        for p in temp_paths:
             if os.path.exists(p):
                 os.remove(p)
-        out.update(kernel_instances="", union_busy_ms="", concurrent_ms="", overlap_ratio="")
+        out.update(empty_metrics)
         return out
 
     if proc.returncode == 4:
@@ -196,27 +210,41 @@ def profile_cell(row, tmp_dir):
               f"config={row.config} -- dropping", file=sys.stderr)
         return None
 
-    export_cmd = ["nsys", "export", "--type=sqlite", "--force-overwrite=true", rep_path]
-    proc = subprocess.run(export_cmd, capture_output=True, text=True)
-    if proc.returncode != 0 or not os.path.exists(sqlite_path):
-        print(f"WARNING: nsys export failed for cell {row.test_point_id} config={row.config} "
-              f"-- dropping. stderr:\n{proc.stderr.strip()}", file=sys.stderr)
-        os.remove(rep_path)
-        return None
+    # NEVER `nsys export --type=sqlite` -- confirmed to produce an empty (0-table)
+    # database on this project's nsys version. `nsys stats --format csv` is the
+    # working extraction path (prompts/03_green_context/03_verify_overlap_nsys.md).
+    for report, out_csv in (("cuda_gpu_trace", gpu_csv_path), ("nvtx_pushpop_trace", nvtx_csv_path)):
+        stats_cmd = ["nsys", "stats", "--report", report, "--format", "csv",
+                     "--force-export=true", "--output", base, rep_path]
+        proc = subprocess.run(stats_cmd, capture_output=True, text=True)
+        if proc.returncode != 0 or not os.path.exists(out_csv):
+            print(f"WARNING: `nsys stats --report {report}` failed for cell {row.test_point_id} "
+                  f"config={row.config} -- dropping. stderr:\n{proc.stderr.strip()}", file=sys.stderr)
+            for p in temp_paths:
+                if os.path.exists(p):
+                    os.remove(p)
+            return None
 
     try:
-        metrics = parse_nsys_sqlite.compute_overlap(sqlite_path)
-        if not metrics["name_filtered"]:
-            print(f"NOTE: cell {row.test_point_id} config={row.config}: could not resolve kernel "
-                  f"names in this nsys sqlite export -- overlap computed over ALL kernel intervals "
-                  f"(fillKernel init included, negligible for >=10 trials)", file=sys.stderr)
-    finally:
-        # Disk hygiene (prompt: do not let traces accumulate across the run).
-        os.remove(rep_path)
-        os.remove(sqlite_path)
+        metrics = parse_nsys_csv.compute_overlap_in_window(gpu_csv_path, nvtx_csv_path)
+    except RuntimeError as e:
+        print(f"WARNING: could not parse nsys CSVs for cell {row.test_point_id} "
+              f"config={row.config} -- recording overlap_ratio=NaN, continuing. Error: {e}",
+              file=sys.stderr)
+        for p in temp_paths:
+            if os.path.exists(p):
+                os.remove(p)
+        out.update(empty_metrics)
+        return out
+
+    # Disk hygiene (prompt: do not let traces/CSVs accumulate across the run).
+    for p in temp_paths:
+        if os.path.exists(p):
+            os.remove(p)
 
     out.update(
-        kernel_instances=metrics["kernel_instances"],
+        kernel_instances_in_window=metrics["kernel_instances_in_window"],
+        distinct_greenctx=metrics["distinct_greenctx"],
         union_busy_ms=f"{metrics['union_busy_ms']:.6f}",
         concurrent_ms=f"{metrics['concurrent_ms']:.6f}",
         overlap_ratio=f"{metrics['overlap_ratio']:.4f}",
@@ -278,8 +306,8 @@ def main():
         print(f"NOTE: {dropped} cell(s) dropped (invalid SM ratio or nsys failure) -- "
               f"see WARNINGs above", file=sys.stderr)
     if timed_out:
-        print(f"NOTE: {timed_out} cell(s) timed out (overlap_ratio recorded as NaN) -- "
-              f"see WARNINGs above", file=sys.stderr)
+        print(f"NOTE: {timed_out} cell(s) timed out or had an unparseable 'measure' NVTX window "
+              f"(overlap_ratio recorded as NaN) -- see WARNINGs above", file=sys.stderr)
 
 
 if __name__ == "__main__":

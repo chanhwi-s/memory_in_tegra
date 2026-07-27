@@ -65,6 +65,7 @@
 // (scripts/sweep.py catches 4, warns, and continues with the next cell).
 #include <cuda_runtime.h>
 #include <cuda.h>
+#include <nvtx3/nvToolsExt.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -454,7 +455,8 @@ static Args parseArgs(int argc, char** argv) {
 
 static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
                                    float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
-                                   int tpb, int trials, int reuseN, double* k0MsOut, double* k1MsOut) {
+                                   int tpb, int trials, int reuseN, double* k0MsOut, double* k1MsOut,
+                                   bool tagMeasuredTrials = false) {
     cudaStream_t s0, s1;
     CUDA_CHECK(cudaStreamCreate(&s0));
     CUDA_CHECK(cudaStreamCreate(&s1));
@@ -469,6 +471,12 @@ static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0,
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop0));
     CUDA_CHECK(cudaEventCreate(&stop1));
+
+    // prompts/03_green_context/03_verify_overlap_nsys.md: mark ONLY the final
+    // measured-trial loop (never warmup above, never the in-context block-search
+    // calls, which pass tagMeasuredTrials=false) so nsys/NVTX can isolate exactly
+    // this window when computing the overlap metric.
+    if (tagMeasuredTrials) nvtxRangePush("measure");
 
     std::vector<double> wallMs, k0Ms, k1Ms;
     for (int t = 0; t < trials; ++t) {
@@ -494,6 +502,8 @@ static double measureSharedWallMs(float* dA0, float* dB0, float* dC0, size_t n0,
         wallMs.push_back(std::max(ms0, ms1));
     }
 
+    if (tagMeasuredTrials) nvtxRangePop();
+
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop0));
     CUDA_CHECK(cudaEventDestroy(stop1));
@@ -514,7 +524,8 @@ static bool measureGreenWallMs(CUdevice dev, int sm0Count,
                                 float* dA0, float* dB0, float* dC0, size_t n0, int blocks0,
                                 float* dA1, float* dB1, float* dC1, size_t n1, int blocks1,
                                 int tpb, int trials, int reuseN,
-                                double* wallMsOut, double* k0MsOut, double* k1MsOut) {
+                                double* wallMsOut, double* k0MsOut, double* k1MsOut,
+                                bool tagMeasuredTrials = false) {
     GreenPartition p0{}, p1{};
     CUresult err = CUDA_SUCCESS;
     const char* stage = "";
@@ -545,6 +556,12 @@ static bool measureGreenWallMs(CUdevice dev, int sm0Count,
     CUDA_CHECK(cudaEventCreate(&stop0));
     CUDA_CHECK(cudaEventCreate(&stop1));
 
+    // prompts/03_green_context/03_verify_overlap_nsys.md: mark ONLY the final
+    // measured-trial loop (never warmup above, never the in-context block-search
+    // calls, which pass tagMeasuredTrials=false) so nsys/NVTX can isolate exactly
+    // this window when computing the overlap metric.
+    if (tagMeasuredTrials) nvtxRangePush("measure");
+
     std::vector<double> wallMs, k0Ms, k1Ms;
     for (int t = 0; t < trials; ++t) {
         CUDA_CHECK(cudaEventRecord(start, s0));
@@ -569,6 +586,8 @@ static bool measureGreenWallMs(CUdevice dev, int sm0Count,
         k1Ms.push_back(ms1);
         wallMs.push_back(std::max(ms0, ms1));
     }
+
+    if (tagMeasuredTrials) nvtxRangePop();
 
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop0));
@@ -801,14 +820,15 @@ int main(int argc, char** argv) {
     int smSplit0 = 0, smSplit1 = 0;
     if (a.config == "shared") {
         wallMs = measureSharedWallMs(dA0, dB0, dC0, n0, bestBlocks0, dA1, dB1, dC1, n1, bestBlocks1,
-                                      a.tpb, a.trials, a.reuseN, &k0Ms, &k1Ms);
+                                      a.tpb, a.trials, a.reuseN, &k0Ms, &k1Ms,
+                                      /*tagMeasuredTrials=*/true);
         smSplit0 = 16;  // shared: both kernels see all 16 SMs
         smSplit1 = 16;
     } else {
 #if GREEN_CTX_COMPILED
         if (!measureGreenWallMs(dev, a.sm0, dA0, dB0, dC0, n0, bestBlocks0,
                                  dA1, dB1, dC1, n1, bestBlocks1, a.tpb, a.trials, a.reuseN,
-                                 &wallMs, &k0Ms, &k1Ms)) {
+                                 &wallMs, &k0Ms, &k1Ms, /*tagMeasuredTrials=*/true)) {
             cudaFree(dA0); cudaFree(dB0); cudaFree(dC0);
             cudaFree(dA1); cudaFree(dB1); cudaFree(dC1);
             return 4;  // ratio rejected by driver: sweep.py warns and skips this cell
