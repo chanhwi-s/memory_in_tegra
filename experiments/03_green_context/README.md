@@ -72,9 +72,30 @@ scripts/sweep_reuse.py  (v3 Change 3, new) reuse_N overlay driver: reads back re
                         at one check N, measures the subset x reuse_N grid, writes the
                         SEPARATE results/phase3_reuse_results.csv. Called automatically by
                         run.sh right after sweep.py (pass run.sh --skip-reuse to skip it).
+scripts/run_overlap_nsys.py  (prompts/03_green_context/03_verify_overlap_nsys.md, additive)
+                        selects the single peak-bandwidth test point per mode (symmetric,
+                        asymmetric) from results/phase3_results.csv, reconstructs its exact
+                        shared + best-green cells via --fixed-blocks0/1, profiles each under
+                        `timeout 180 nsys profile -t cuda --sample=none --cpuctxsw=none`, and
+                        writes the SEPARATE results/overlap_nsys.csv (verification-only --
+                        never read as throughput). Called automatically by run.sh right after
+                        the reuse overlay (pass run.sh --skip-nsys to skip it; also skipped
+                        automatically with a warning if `nsys`/`timeout` aren't on PATH).
+scripts/parse_nsys_sqlite.py  small parser: sweep-line over an nsys sqlite export's
+                        CUPTI_ACTIVITY_KIND_KERNEL start/end intervals -> union_busy_ms /
+                        concurrent_ms / overlap_ratio. Also runnable standalone on one trace.
+scripts/plot_overlap_nsys.py  results/overlap_nsys.csv -> results/plots/
+                        overlap_ratio_vs_footprint_combined_footprint.png (shared vs green,
+                        reference line at overlap_ratio=1). Skips cleanly if the CSV is absent.
+scripts/verify_overlap_nsys.sh  standalone entry point for just the nsys step (build if
+                        stale, lock clocks, run_overlap_nsys.py, plot_overlap_nsys.py);
+                        run.sh calls the same two Python scripts directly, this is for
+                        re-running just the nsys verification on its own.
 scripts/run.sh          single entry point: locks clocks, runs sweep.py (reuse=1), partition
-                        verification, sweep_reuse.py (reuse_N overlay, best-effort), plot.py,
-                        derive_findings.py, appends shared/env.md
+                        verification, sweep_reuse.py (reuse_N overlay, best-effort),
+                        run_overlap_nsys.py (nsys concurrency verification, best-effort),
+                        plot.py, plot_overlap_nsys.py (if its CSV exists), derive_findings.py,
+                        appends shared/env.md
 scripts/plot.py         results/phase3_results.csv -> results/plots/*.png (green_vs_shared,
                         partition_sweep, delta_vs_size); ALSO reads the optional
                         results/phase3_reuse_results.csv -> reuse_green_vs_shared.png if
@@ -123,18 +144,26 @@ shown labeled `UNVERIFIED`.
 ## Running (on the Jetson AGX Orin device)
 
 ```bash
-scripts/run.sh                 # everything: reuse=1 sweep + reuse_N overlay + plots + findings
-scripts/run.sh --skip-reuse    # reuse=1 sweep only (skips the ~48-cell reuse_N overlay)
+scripts/run.sh                 # everything: reuse=1 sweep + reuse_N overlay + nsys overlap
+                                # verification + plots + findings
+scripts/run.sh --skip-reuse    # skip the ~48-cell reuse_N overlay
+scripts/run.sh --skip-nsys     # skip the nsys concurrency verification
 ```
 
 `scripts/run.sh` is the single entry point: build (if needed) -> lock clocks -> `--check-api`
 -> sweep (`results/phase3_results.csv`) -> `--verify` (`results/partition_verification.txt`)
 -> **reuse_N overlay** (`scripts/sweep_reuse.py` -> `results/phase3_reuse_results.csv`;
 best-effort -- a failure here only warns and continues, since it's diagnostic-only and must
-not block the reuse=1 results) -> plots (`results/plots/green_vs_shared.png`,
-`partition_sweep.png`, `delta_vs_size.png`, `reuse_green_vs_shared.png`) -> findings
-(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. Pass `--skip-reuse` to run the
-mandatory reuse=1 sweep only.
+not block the reuse=1 results) -> **nsys overlap verification**
+(`scripts/run_overlap_nsys.py` -> `results/overlap_nsys.csv`; also best-effort, and skipped
+automatically with a warning if `nsys`/`timeout` aren't installed -- only 4 cells now
+(peak-bandwidth point x {symmetric, asymmetric} x {shared, best-green}), cheap enough to run
+every time) -> plots (`results/plots/green_vs_shared.png`, `partition_sweep.png`,
+`delta_vs_size.png`, `reuse_green_vs_shared.png`, and
+`overlap_ratio_vs_footprint_combined_footprint.png` if the nsys CSV exists) -> findings
+(`findings.json`, `FINDINGS.md`) -> append `shared/env.md`. Pass `--skip-reuse` and/or
+`--skip-nsys` to skip either diagnostic/verification step; the mandatory reuse=1 sweep always
+runs.
 
 All scripts resolve their own paths, so they can be invoked from any working directory. The
 plot/findings steps need `pandas` + `matplotlib`; run `scripts/plot.py` /
