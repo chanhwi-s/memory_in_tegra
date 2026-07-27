@@ -263,8 +263,12 @@ def build_plan(phase1, phase2):
     return cells, warnings
 
 
-def run_cell(cell, trials):
-    args = [
+def build_binary_args(cell, trials):
+    """CLI args for one phase3_bench invocation of this cell. Extracted so
+    scripts/run_overlap_nsys.py can import and reuse it verbatim -- the nsys
+    verification sweep must profile EXACTLY the cells/configuration the
+    throughput sweep measures, never a re-derived approximation of them."""
+    return [
         BIN_PATH,
         "--test-point-id", cell["test_point_id"],
         "--mode", cell["mode"],
@@ -278,6 +282,10 @@ def run_cell(cell, trials):
         "--tpb", str(cell["tpb"]),
         "--trials", str(trials),
     ]
+
+
+def run_cell(cell, trials):
+    args = build_binary_args(cell, trials)
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode == 4:
         # phase3_bench: this SM ratio was invalid, or was rejected by the driver
