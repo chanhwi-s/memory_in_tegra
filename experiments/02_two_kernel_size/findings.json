@@ -1,37 +1,37 @@
 {
   "schema_version": "1.0",
   "phase": "02_two_kernel_size",
-  "generated_utc": "2026-07-27T10:17:10Z",
+  "generated_utc": "2026-07-27T10:20:30Z",
   "source_csv": "experiments/02_two_kernel_size/results/phase2_results.csv",
   "env_ref": "shared/env.md",
   "results": {
     "symmetric_contention_onset": {
-      "per_kernel_bytes": 1048576,
-      "combined_footprint_bytes": 4194304,
-      "scaling_efficiency": 0.2757
+      "per_kernel_bytes": 851968,
+      "combined_footprint_bytes": 3407872,
+      "scaling_efficiency": 0.2654
     },
     "symmetric_roofline_points": {
       "onset": {
-        "per_kernel_bytes": 1048576
+        "per_kernel_bytes": 851968
       },
       "ninety_pct": {
-        "per_kernel_bytes": 917504
+        "per_kernel_bytes": 786432
       }
     },
     "asymmetric_k_used_bytes": 2097152,
     "asymmetric_result_at_k": {
-      "agg_GBps": 157.203,
-      "k0_GBps": 70.926,
-      "k1_GBps": 104.802
+      "agg_GBps": 158.683,
+      "k0_GBps": 81.377,
+      "k1_GBps": 105.789
     },
     "recommended_phase3_test_points": [
       {
         "mode": "symmetric",
-        "per_kernel_bytes": 1048576
+        "per_kernel_bytes": 851968
       },
       {
         "mode": "symmetric",
-        "per_kernel_bytes": 917504
+        "per_kernel_bytes": 786432
       },
       {
         "mode": "asymmetric",

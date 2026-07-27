@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0",
   "phase": "01_single_kernel_size",
-  "generated_utc": "2026-07-27T10:17:35Z",
+  "generated_utc": "2026-07-27T10:20:26Z",
   "source_csv": "experiments/01_single_kernel_size/results/phase1_results.csv",
   "env_ref": "shared/env.md",
   "results": {
-    "measured_dram_peak_GBps": 178.7,
+    "measured_dram_peak_GBps": 178.9,
     "tier_steps": {
       "l2_resident_max_read_footprint_bytes": 1048576,
       "slc_region_max_read_footprint_bytes": 2097152,
@@ -14,7 +14,7 @@
     "saturation_blocks_by_size": {
       "32768": 64,
       "65536": 32,
-      "131072": 64,
+      "131072": 32,
       "262144": 64,
       "524288": 64,
       "1048576": 64,

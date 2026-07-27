@@ -6,7 +6,7 @@ asym_03,asymmetric,shared,0,0,1048576,4816896,1,64,1024,256,dram,0
 asym_04,asymmetric,shared,0,0,1048576,8429568,1,64,256,256,dram,0
 asym_05,asymmetric,shared,0,0,1048576,14751744,1,64,256,256,dram,0
 asym_06,asymmetric,shared,0,0,1048576,25815552,1,64,256,256,dram,0
-sym_0,symmetric,shared,0,0,917504,917504,1,64,64,256,l1,1
-sym_1,symmetric,shared,0,0,1048576,1048576,1,64,64,256,l1,1
+sym_0,symmetric,shared,0,0,786432,786432,1,64,64,256,l1,1
+sym_1,symmetric,shared,0,0,851968,851968,1,64,64,256,l1,1
 sym_ctx_small,symmetric,shared,0,0,1572864,1572864,1,64,64,256,l1,0
 sym_ctx_large,symmetric,shared,0,0,25815552,25815552,1,256,256,256,dram,0

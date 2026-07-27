@@ -1,7 +1,7 @@
-==PROF== Connected to process 201827 (/home/chanhwi/workspace/memory_in_tegra/experiments/04_zero_copy/build/phase4_bench)
+==PROF== Connected to process 211605 (/home/chanhwi/workspace/memory_in_tegra/experiments/04_zero_copy/build/phase4_bench)
 ==ERROR== Failed to prepare kernel for profiling
 
 ==ERROR== The user does not have permission to access NVIDIA GPU Performance Counters on the target vGPU device 0.
-==ERROR== Failed to profile "fillKernel" in process 201827
+==ERROR== Failed to profile "fillKernel" in process 211605
 ==PROF== Trying to shutdown target application
 ==ERROR== The application returned an error code (9).
