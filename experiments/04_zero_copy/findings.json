@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "phase": "04_zero_copy",
-  "generated_utc": "2026-07-27T04:33:04Z",
+  "generated_utc": "2026-07-27T08:43:58Z",
   "source_csv": "experiments/04_zero_copy/results/phase4_results.csv",
   "env_ref": "shared/env.md",
   "results": {
@@ -14,9 +14,9 @@
         "is_anchor": false,
         "k1_bytes": 1572864,
         "plateau_reached": false,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 11.41,
+        "crossover_reuse_N": 8,
+        "crossover_note": "delta flipped sign at reuse_N=8",
+        "zc_delta_at_N1_pct": 7.82,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -29,10 +29,10 @@
         "is_anchor": false,
         "k1_bytes": 2752512,
         "plateau_reached": false,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -1.46,
-        "bound_conclusion": "dram-bound-throughout",
+        "crossover_reuse_N": 2,
+        "crossover_note": "delta flipped sign at reuse_N=2",
+        "zc_delta_at_N1_pct": -0.18,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       },
@@ -46,7 +46,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.56,
+        "zc_delta_at_N1_pct": -0.98,
         "bound_conclusion": "dram-bound-throughout",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -59,10 +59,10 @@
         "is_anchor": false,
         "k1_bytes": 8429568,
         "plateau_reached": true,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.62,
-        "bound_conclusion": "dram-bound-throughout",
+        "crossover_reuse_N": 8,
+        "crossover_note": "delta flipped sign at reuse_N=8",
+        "zc_delta_at_N1_pct": -0.45,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       },
@@ -76,7 +76,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.21,
+        "zc_delta_at_N1_pct": -0.99,
         "bound_conclusion": "dram-bound-throughout",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -91,7 +91,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 2,
         "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": 0.11,
+        "zc_delta_at_N1_pct": -0.58,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -104,9 +104,9 @@
         "is_anchor": true,
         "k1_bytes": 2097152,
         "plateau_reached": false,
-        "crossover_reuse_N": 2,
-        "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": -5.91,
+        "crossover_reuse_N": 0,
+        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
+        "zc_delta_at_N1_pct": -9.7,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -121,7 +121,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 31.13,
+        "zc_delta_at_N1_pct": 31.24,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -136,7 +136,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 31.73,
+        "zc_delta_at_N1_pct": 33.42,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -151,7 +151,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 4,
         "crossover_note": "delta flipped sign at reuse_N=4",
-        "zc_delta_at_N1_pct": -0.03,
+        "zc_delta_at_N1_pct": 0.07,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -166,8 +166,8 @@
         "plateau_reached": false,
         "crossover_reuse_N": 2,
         "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": 4.26,
-        "bound_conclusion": "memory-bound",
+        "zc_delta_at_N1_pct": -0.93,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       }
@@ -181,9 +181,9 @@
         "is_anchor": false,
         "k1_bytes": 1572864,
         "plateau_reached": false,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 11.41,
+        "crossover_reuse_N": 8,
+        "crossover_note": "delta flipped sign at reuse_N=8",
+        "zc_delta_at_N1_pct": 7.82,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -196,9 +196,9 @@
         "is_anchor": true,
         "k1_bytes": 2097152,
         "plateau_reached": false,
-        "crossover_reuse_N": 2,
-        "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": -5.91,
+        "crossover_reuse_N": 0,
+        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
+        "zc_delta_at_N1_pct": -9.7,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -211,10 +211,10 @@
         "is_anchor": false,
         "k1_bytes": 2752512,
         "plateau_reached": false,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -1.46,
-        "bound_conclusion": "dram-bound-throughout",
+        "crossover_reuse_N": 2,
+        "crossover_note": "delta flipped sign at reuse_N=2",
+        "zc_delta_at_N1_pct": -0.18,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       },
@@ -228,7 +228,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.56,
+        "zc_delta_at_N1_pct": -0.98,
         "bound_conclusion": "dram-bound-throughout",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -241,10 +241,10 @@
         "is_anchor": false,
         "k1_bytes": 8429568,
         "plateau_reached": true,
-        "crossover_reuse_N": 0,
-        "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.62,
-        "bound_conclusion": "dram-bound-throughout",
+        "crossover_reuse_N": 8,
+        "crossover_note": "delta flipped sign at reuse_N=8",
+        "zc_delta_at_N1_pct": -0.45,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       },
@@ -258,7 +258,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": -0.21,
+        "zc_delta_at_N1_pct": -0.99,
         "bound_conclusion": "dram-bound-throughout",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -273,7 +273,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 2,
         "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": 0.11,
+        "zc_delta_at_N1_pct": -0.58,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -290,7 +290,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 31.13,
+        "zc_delta_at_N1_pct": 31.24,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -305,7 +305,7 @@
         "plateau_reached": false,
         "crossover_reuse_N": 0,
         "crossover_note": "delta sign never flipped across swept reuse_N (1..32)",
-        "zc_delta_at_N1_pct": 31.73,
+        "zc_delta_at_N1_pct": 33.42,
         "bound_conclusion": "memory-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -320,7 +320,7 @@
         "plateau_reached": true,
         "crossover_reuse_N": 4,
         "crossover_note": "delta flipped sign at reuse_N=4",
-        "zc_delta_at_N1_pct": -0.03,
+        "zc_delta_at_N1_pct": 0.07,
         "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
@@ -335,8 +335,8 @@
         "plateau_reached": false,
         "crossover_reuse_N": 2,
         "crossover_note": "delta flipped sign at reuse_N=2",
-        "zc_delta_at_N1_pct": 4.26,
-        "bound_conclusion": "memory-bound",
+        "zc_delta_at_N1_pct": -0.93,
+        "bound_conclusion": "compute-bound",
         "l2_bypass_verified": false,
         "l2_bypass_note": "l2_hit_rate_zc not profiled yet (run scripts/profile_l2.sh)"
       }
@@ -352,7 +352,7 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 122.776,
-          "v2_cached_GBps": 130.346,
+          "v2_cached_GBps": 133.172,
           "status": "pass"
         },
         {
@@ -362,8 +362,8 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 146.303,
-          "v2_cached_GBps": 143.142,
-          "status": "FAIL"
+          "v2_cached_GBps": 153.899,
+          "status": "pass"
         },
         {
           "test_point_id": "asym_2",
@@ -372,8 +372,8 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 161.783,
-          "v2_cached_GBps": 159.227,
-          "status": "FAIL"
+          "v2_cached_GBps": 167.289,
+          "status": "pass"
         },
         {
           "test_point_id": "asym_2",
@@ -382,8 +382,8 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 175.014,
-          "v2_cached_GBps": 173.443,
-          "status": "FAIL"
+          "v2_cached_GBps": 175.816,
+          "status": "pass"
         },
         {
           "test_point_id": "asym_2",
@@ -392,8 +392,8 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 183.152,
-          "v2_cached_GBps": 177.385,
-          "status": "FAIL"
+          "v2_cached_GBps": 183.344,
+          "status": "pass"
         },
         {
           "test_point_id": "asym_2",
@@ -402,8 +402,8 @@
           "k0_bytes": 1048576,
           "k1_bytes": 2097152,
           "v1_cached_GBps": 187.843,
-          "v2_cached_GBps": 183.5,
-          "status": "FAIL"
+          "v2_cached_GBps": 187.339,
+          "status": "pass"
         },
         {
           "test_point_id": "sym_0",
@@ -412,7 +412,7 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 84.309,
-          "v2_cached_GBps": 96.079,
+          "v2_cached_GBps": 96.242,
           "status": "pass"
         },
         {
@@ -422,8 +422,8 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 128.118,
-          "v2_cached_GBps": 123.763,
-          "status": "FAIL"
+          "v2_cached_GBps": 133.486,
+          "status": "pass"
         },
         {
           "test_point_id": "sym_0",
@@ -432,7 +432,7 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 171.196,
-          "v2_cached_GBps": 141.283,
+          "v2_cached_GBps": 152.865,
           "status": "FAIL"
         },
         {
@@ -442,7 +442,7 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 198.006,
-          "v2_cached_GBps": 172.721,
+          "v2_cached_GBps": 179.012,
           "status": "FAIL"
         },
         {
@@ -452,7 +452,7 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 217.778,
-          "v2_cached_GBps": 190.417,
+          "v2_cached_GBps": 195.99,
           "status": "FAIL"
         },
         {
@@ -462,7 +462,7 @@
           "k0_bytes": 917504,
           "k1_bytes": 917504,
           "v1_cached_GBps": 230.986,
-          "v2_cached_GBps": 201.259,
+          "v2_cached_GBps": 208.85,
           "status": "FAIL"
         },
         {
@@ -475,7 +475,7 @@
         }
       ]
     },
-    "headline": "Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 1.50MB-1.50MB range, peaking at asym_00 (l1 regime): +11.4% at reuse N=1, crossing over around reuse N=>32. Beyond that (2.00MB-24.62MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses)."
+    "headline": "Across the widened asymmetric K1 sweep (1.50MB -> 24.62MB), zero copy helps (memory-bound) in the 1.50MB-1.50MB range, peaking at asym_00 (l1 regime): +7.8% at reuse N=1, crossing over around reuse N=8. Beyond that (2.00MB-24.62MB), the workload is DRAM/compute-limited enough that bypassing cache costs throughput instead (zero copy loses)."
   },
   "consumed": [
     "experiments/01_single_kernel_size/findings.json",

@@ -1,5 +1,5 @@
-test_point_id,mode,config,k0_bytes,k1_bytes,combined_read_footprint_bytes,kernel_instances_in_window,distinct_greenctx,union_busy_ms,concurrent_ms,overlap_ratio,gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version
-asym_65536,asymmetric,shared,1048576,65536,2228224,,,,,,1300,MAXN,52.3,13.2,13.2
-asym_65536,asymmetric,green,1048576,65536,2228224,,,,,,1300,MAXN,52.7,13.2,13.2
-sym_25165824,symmetric,shared,25165824,25165824,100663296,,,,,,1300,MAXN,52.3,13.2,13.2
-sym_25165824,symmetric,green,25165824,25165824,100663296,,,,,,1300,MAXN,52.5,13.2,13.2
+test_point_id,mode,config,k0_bytes,k1_bytes,combined_read_footprint_bytes,kernel_instances_in_window,distinct_greenctx,union_busy_ms,concurrent_ms,overlap_ratio,gpu_clock_mhz,power_mode,soc_temp_c,cuda_version,driver_version,sm_split_k0,sm_split_k1,blocks_k0,blocks_k1,threads_per_block
+asym_131072,asymmetric,shared,1048576,131072,2359296,,,,,,1300,MAXN,55.6,13.2,13.2,16,16,512,128,256
+asym_131072,asymmetric,green,1048576,131072,2359296,,,,,,1300,MAXN,55.3,13.2,13.2,12,4,256,64,256
+sym_25165824,symmetric,shared,25165824,25165824,100663296,,,,,,1300,MAXN,55.4,13.2,13.2,16,16,8192,4096,256
+sym_25165824,symmetric,green,25165824,25165824,100663296,,,,,,1300,MAXN,55.4,13.2,13.2,8,8,8192,4096,256
